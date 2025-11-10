@@ -19,22 +19,7 @@ public partial class Groups
             foreach (var (player, admin) in ServerAdmins.ServerAdmins.PlayerAdmins)
             {
                 if (!admin.Servers.Contains(Admins.ServerGUID)) continue;
-
-                foreach (var permission in admin.Permissions)
-                {
-                    Core.Permission.RemovePermission(player.SteamID, permission);
-                }
-
-                foreach (var group in admin.Groups)
-                {
-                    var obj = AllGroups.Find(p => p.Name == group && p.Servers.Contains(Admins.ServerGUID));
-                    if (obj == null) continue;
-
-                    foreach (var permission in obj.Permissions)
-                    {
-                        Core.Permission.RemovePermission(player.SteamID, permission);
-                    }
-                }
+                ServerAdmins.ServerAdmins.UnassignAdmin(player, admin);
             }
 
             var database = Core.Database.GetConnection("admins");

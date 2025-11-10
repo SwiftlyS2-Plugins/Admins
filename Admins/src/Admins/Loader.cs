@@ -22,21 +22,7 @@ public partial class ServerAdmins
             {
                 if (!admin.Servers.Contains(Admins.ServerGUID)) continue;
 
-                foreach (var permission in admin.Permissions)
-                {
-                    Core.Permission.RemovePermission(player.SteamID, permission);
-                }
-
-                foreach (var group in admin.Groups)
-                {
-                    var obj = Groups.Groups.AllGroups.Find(p => p.Name == group && p.Servers.Contains(Admins.ServerGUID));
-                    if (obj == null) continue;
-
-                    foreach (var permission in obj.Permissions)
-                    {
-                        Core.Permission.RemovePermission(player.SteamID, permission);
-                    }
-                }
+                UnassignAdmin(player, admin);
             }
 
             var database = Core.Database.GetConnection("admins");
@@ -81,5 +67,46 @@ public partial class ServerAdmins
         }
 
         Admins.AdminAPI.TriggerLoadAdmin(player, admin);
+    }
+
+    public static void UnassignAdmin(IPlayer player, Admin admin)
+    {
+        foreach (var permission in admin.Permissions)
+        {
+            Core.Permission.RemovePermission(player.SteamID, permission);
+        }
+
+        foreach (var group in admin.Groups)
+        {
+            var obj = Groups.Groups.AllGroups.Find(p => p.Name == group && p.Servers.Contains(Admins.ServerGUID));
+            if (obj == null) continue;
+
+            foreach (var permission in obj.Permissions)
+            {
+                Core.Permission.RemovePermission(player.SteamID, permission);
+            }
+        }
+
+        PlayerAdmins.TryRemove(player, out _);
+    }
+
+    public static void RemoveAdmin(Admin admin)
+    {
+        Task.Run(() =>
+        {
+            var database = Core.Database.GetConnection("admins");
+            database.Delete(admin);
+            Load();
+        });
+    }
+
+    public static void AddAdmin(Admin admin)
+    {
+        Task.Run(() =>
+        {
+            var database = Core.Database.GetConnection("admins");
+            database.Insert(admin);
+            Load();
+        });
     }
 }

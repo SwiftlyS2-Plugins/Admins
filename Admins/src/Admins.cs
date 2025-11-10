@@ -1,10 +1,12 @@
 using Admins.API;
+using Admins.Bans;
 using Admins.Contract;
 using Admins.Database;
 using Admins.Database.Models;
 using Microsoft.Extensions.Logging;
 using SwiftlyS2.Shared;
 using SwiftlyS2.Shared.Events;
+using SwiftlyS2.Shared.Players;
 using SwiftlyS2.Shared.Plugins;
 using SwiftlyS2.Shared.SchemaDefinitions;
 
@@ -67,12 +69,31 @@ public partial class Admins : BasePlugin
     public void OnClientSteamAuthorize(IOnClientSteamAuthorizeEvent @event)
     {
         int playerid = @event.PlayerId;
+
+        var player = Core.PlayerManager.GetPlayer(playerid);
+        if (player == null) return;
+
+        var ban = ServerBans.FindActiveBan(player.SteamID, player.IPAddress);
+        if (ban != null)
+        {
+            string kickMessage = Core.Translation.GetPlayerLocalizer(player)[
+                "ban.kick_message",
+                ban.Reason,
+                ban.ExpiresAt == 0 ? Core.Translation.GetPlayerLocalizer(player)["never"] : DateTimeOffset.FromUnixTimeMilliseconds((long)ban.ExpiresAt).ToString("yyyy-MM-dd HH:mm:ss"),
+                ban.AdminName,
+                ban.AdminSteamId64.ToString()
+            ];
+            player.SendMessage(MessageType.Console, kickMessage);
+            player.Kick(kickMessage, SwiftlyS2.Shared.ProtobufDefinitions.ENetworkDisconnectionReason.NETWORK_DISCONNECT_REJECT_BANNED);
+            return;
+        }
+
         Task.Run(() =>
         {
             var admin = AdminAPI.GetAdmin(playerid);
             if (admin == null) return;
 
-            global::Admins.ServerAdmins.ServerAdmins.AssignAdmin(Core.PlayerManager.GetPlayer(playerid), (Admin)admin);
+            global::Admins.ServerAdmins.ServerAdmins.AssignAdmin(player, (Admin)admin);
         });
     }
 }

@@ -1,4 +1,5 @@
 using Admins.Contract;
+using Admins.Database.Models;
 using SwiftlyS2.Shared;
 using SwiftlyS2.Shared.Players;
 
@@ -10,6 +11,21 @@ public class AdminAPIv1 : IAdminAPIv1
     private static ISwiftlyCore Core = null!;
 
     public event Action<IPlayer, IAdmin>? OnAdminLoad;
+    public event Action<IBan>? OnBanAdded;
+
+    public IAdmin? AddAdmin(ulong steamId64, string adminName, List<IGroup> groups, List<string> permissions)
+    {
+        var admin = new Admin
+        {
+            SteamId64 = (long)steamId64,
+            Username = adminName,
+            Groups = groups.Select(g => g.Name).ToList(),
+            Permissions = permissions,
+            Servers = [Admins.ServerGUID]
+        };
+        ServerAdmins.ServerAdmins.AddAdmin(admin);
+        return admin;
+    }
 
     public IAdmin? GetAdmin(int playerid)
     {
@@ -71,8 +87,18 @@ public class AdminAPIv1 : IAdminAPIv1
         Groups.Groups.Load();
     }
 
+    public void RemoveAdmin(IAdmin admin)
+    {
+        ServerAdmins.ServerAdmins.RemoveAdmin((Admin)admin);
+    }
+
     public void TriggerLoadAdmin(IPlayer player, IAdmin admin)
     {
         OnAdminLoad?.Invoke(player, admin);
+    }
+
+    public void TriggerBanAdded(IBan ban)
+    {
+        OnBanAdded?.Invoke(ban);
     }
 }

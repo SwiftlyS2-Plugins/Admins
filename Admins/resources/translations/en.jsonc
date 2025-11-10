@@ -1,3 +1,4 @@
 {
-  "hello": "world"
+  "ban.kick_message": "You are banned from this server.\nReason: {0}\nExpires at: {1}\nBanned by: {2} ({3})",
+  "never": "Never"
 }

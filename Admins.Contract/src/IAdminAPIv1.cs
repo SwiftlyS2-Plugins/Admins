@@ -27,6 +27,20 @@ public interface IAdminAPIv1
     /// </summary>
     /// <returns>A list of all admins.</returns>
     public List<IAdmin> GetAllAdmins();
+    /// <summary>
+    /// Adds a new admin to the database.
+    /// </summary>
+    /// <param name="steamId64">The SteamID64 of the admin.</param>
+    /// <param name="adminName">The name of the admin.</param>
+    /// <param name="groups">The groups the admin belongs to.</param>
+    /// <param name="permissions">The permissions the admin has.</param>
+    /// <returns>The newly added admin.</returns>
+    public IAdmin? AddAdmin(ulong steamId64, string adminName, List<IGroup> groups, List<string> permissions);
+    /// <summary>
+    /// Removes an admin from the database.
+    /// </summary>
+    /// <param name="admin">The admin to remove.</param>
+    public void RemoveAdmin(IAdmin admin);
 
     /// <summary>
     /// Gets the group by its name.
@@ -61,5 +75,13 @@ public interface IAdminAPIv1
     /// </summary>
     public void RefreshGroups();
 
+    /// <summary>
+    /// Event fired when an admin is loaded.
+    /// </summary>
     event Action<IPlayer, IAdmin>? OnAdminLoad;
+
+    /// <summary>
+    /// Event fired when a ban is added.
+    /// </summary>
+    event Action<IBan>? OnBanAdded;
 }
