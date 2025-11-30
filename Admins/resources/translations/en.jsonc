@@ -1,5 +1,8 @@
 {
   "ban.kick_message": "You are banned from this server.\nReason: {0}\nExpires at: {1}\nBanned by: {2} ({3})",
   "never": "Never",
-  "gag.message": "You are currently gagged, you will be able to talk at [green]{0}[default]."
+  "gag.message": "You are currently gagged, you will be able to talk at [green]{0}[default].",
+  "mute.message": "You are currently muted, you will be able to talk at [green]{0}[default].",
+  "admins.player_chat_format": "[green](To Admins) {0}[default]: {1}",
+  "admins.admin_chat_format": "[green](Admin Chat) {0}[default]: {1}"
 }

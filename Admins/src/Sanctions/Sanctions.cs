@@ -38,6 +38,12 @@ public partial class ServerSanctions
                 {
                     OriginalVoiceFlags[player.SteamID] = player.VoiceFlags;
                     player.VoiceFlags = VoiceFlagValue.Muted;
+                    var localizer = Core.Translation.GetPlayerLocalizer(player);
+                    string muteMessage = localizer[
+                        "mute.message",
+                        sanction!.ExpiresAt == 0 ? localizer["never"] : DateTimeOffset.FromUnixTimeMilliseconds((long)sanction!.ExpiresAt).ToString("yyyy-MM-dd HH:mm:ss")
+                    ];
+                    player.SendChat(muteMessage);
                 }
             }
             else

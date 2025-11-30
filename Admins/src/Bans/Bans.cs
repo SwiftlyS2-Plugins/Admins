@@ -69,10 +69,11 @@ public partial class ServerBans
         var ban = FindActiveBan(player.SteamID, player.IPAddress);
         if (ban != null)
         {
-            string kickMessage = Core.Translation.GetPlayerLocalizer(player)[
+            var localizer = Core.Translation.GetPlayerLocalizer(player);
+            string kickMessage = localizer[
                 "ban.kick_message",
                 ban.Reason,
-                ban.ExpiresAt == 0 ? Core.Translation.GetPlayerLocalizer(player)["never"] : DateTimeOffset.FromUnixTimeMilliseconds((long)ban.ExpiresAt).ToString("yyyy-MM-dd HH:mm:ss"),
+                ban.ExpiresAt == 0 ? localizer["never"] : DateTimeOffset.FromUnixTimeMilliseconds((long)ban.ExpiresAt).ToString("yyyy-MM-dd HH:mm:ss"),
                 ban.AdminName,
                 ban.AdminSteamId64.ToString()
             ];

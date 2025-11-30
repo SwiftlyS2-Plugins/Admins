@@ -99,7 +99,11 @@ public partial class Admins : BasePlugin
 
         if (teamOnly && text.StartsWith('@'))
         {
-            // todo: Send message to admins
+            var players = Core.PlayerManager.GetAllPlayers().Where(p => Core.Permission.PlayerHasPermission(p.SteamID, "admins.chat"));
+            foreach (var p in players)
+            {
+
+            }
             return HookResult.Stop;
         }
 
