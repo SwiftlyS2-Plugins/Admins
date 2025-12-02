@@ -1,7 +1,7 @@
 <div align="center">
   <img src="https://pan.samyyc.dev/s/VYmMXE" />
   <h2><strong>Admins</strong></h2>
-  <h3>Server/Client persistent variables.</h3>
+  <h3>Base admin system for your server.</h3>
 </div>
 
 <p align="center">
