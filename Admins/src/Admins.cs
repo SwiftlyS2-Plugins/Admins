@@ -1,5 +1,6 @@
 using Admins.API;
 using Admins.Bans;
+using Admins.Commands;
 using Admins.Configuration;
 using Admins.Contract;
 using Admins.Database;
@@ -27,17 +28,20 @@ public partial class Admins : BasePlugin
     public static AdminAPIv1 AdminAPI = new();
     public static AdminBansAPIv1 AdminBansAPI = new();
     public static AdminSanctionsAPIv1 AdminSanctionsAPI = new();
+    public static AdminMenuAPIv1 AdminsMenuAPI = new();
+    private AdminCommands adminCommands = new();
     public static IOptionsMonitor<AdminsConfig> Config = null!;
+    public static ISwiftlyCore SwiftlyCore = null!;
 
     private CancellationTokenSource? syncBansTokenSource = null!;
     private CancellationTokenSource? syncSanctionsTokenSource = null!;
 
     public Admins(ISwiftlyCore core) : base(core)
     {
+        SwiftlyCore = core;
         var connection = core.Database.GetConnection("admins");
-        var connectionString = core.Database.GetConnectionString("admins");
 
-        MigrationRunner.RunMigrations(connection, connectionString);
+        MigrationRunner.RunMigrations(connection);
     }
 
     public override void ConfigureSharedInterface(IInterfaceManager interfaceManager)
@@ -96,14 +100,17 @@ public partial class Admins : BasePlugin
             syncSanctionsTokenSource?.Cancel();
             syncSanctionsTokenSource = Core.Scheduler.RepeatBySeconds(config.SyncIntervalInSeconds, ServerSanctions.DatabaseFetch);
         });
+
+        ServerSanctions.RegisterAdminSubmenu();
+        adminCommands.Init();
     }
 
     public override void Unload()
     {
     }
 
-    [EventListener<EventDelegates.OnStartupServer>]
-    public void OnStartupServer()
+    [EventListener<EventDelegates.OnSteamAPIActivated>]
+    public void OnSteamAPIActivated()
     {
         Task.Run(() =>
         {

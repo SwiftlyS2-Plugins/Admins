@@ -8,9 +8,6 @@ namespace Admins.Bans;
 
 public partial class ServerBans
 {
-    [SwiftlyInject]
-    private static ISwiftlyCore Core = null!;
-
     public static List<IBan> Bans { get; set; } = [];
 
     public static void Load(Action? onLoaded)
@@ -19,7 +16,7 @@ public partial class ServerBans
 
         Task.Run(() =>
         {
-            var database = Core.Database.GetConnection("admins");
+            var database = Admins.SwiftlyCore.Database.GetConnection("admins");
             SetBans([.. database.GetAll<Ban>()]);
             onLoaded?.Invoke();
         });
@@ -46,7 +43,7 @@ public partial class ServerBans
         {
             if (Admins.Config.CurrentValue.UseDatabase)
             {
-                var database = Core.Database.GetConnection("admins");
+                var database = Admins.SwiftlyCore.Database.GetConnection("admins");
                 var id = database.Insert((Ban)ban);
                 ban.Id = (ulong)id;
             }
@@ -61,7 +58,7 @@ public partial class ServerBans
         {
             if (Admins.Config.CurrentValue.UseDatabase)
             {
-                var database = Core.Database.GetConnection("admins");
+                var database = Admins.SwiftlyCore.Database.GetConnection("admins");
                 database.Delete((Ban)ban);
             }
             Bans.Remove(ban);
@@ -75,7 +72,7 @@ public partial class ServerBans
         {
             if (Admins.Config.CurrentValue.UseDatabase)
             {
-                var database = Core.Database.GetConnection("admins");
+                var database = Admins.SwiftlyCore.Database.GetConnection("admins");
                 database.Update((Ban)ban);
             }
 
@@ -91,7 +88,7 @@ public partial class ServerBans
         {
             if (Admins.Config.CurrentValue.UseDatabase)
             {
-                var database = Core.Database.GetConnection("admins");
+                var database = Admins.SwiftlyCore.Database.GetConnection("admins");
                 database.DeleteAll<Ban>();
             }
             Bans.Clear();
@@ -113,7 +110,7 @@ public partial class ServerBans
         var ban = FindActiveBan(player.SteamID, player.IPAddress);
         if (ban != null)
         {
-            var localizer = Core.Translation.GetPlayerLocalizer(player);
+            var localizer = Admins.SwiftlyCore.Translation.GetPlayerLocalizer(player);
             string kickMessage = localizer[
                 "ban.kick_message",
                 ban.Reason,
@@ -123,7 +120,7 @@ public partial class ServerBans
             ];
             player.SendMessage(MessageType.Console, kickMessage);
 
-            Core.Scheduler.NextTick(() =>
+            Admins.SwiftlyCore.Scheduler.NextTick(() =>
             {
                 player.Kick(kickMessage, SwiftlyS2.Shared.ProtobufDefinitions.ENetworkDisconnectionReason.NETWORK_DISCONNECT_REJECT_BANNED);
             });

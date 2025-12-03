@@ -7,11 +7,11 @@ namespace Admins.Commands;
 
 public partial class AdminCommands
 {
-    [SwiftlyInject]
     private ISwiftlyCore Core = null!;
 
     public void Init()
     {
+        Core = Admins.SwiftlyCore;
         Core.Registrator.Register(this);
     }
 

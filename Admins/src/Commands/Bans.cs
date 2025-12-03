@@ -19,7 +19,7 @@ public partial class AdminCommands
             return;
         }
 
-        var players = Core.PlayerManager.FindTargettedPlayers(context.Sender!, context.Args[0], TargetSearchMode.None);
+        var players = Core.PlayerManager.FindTargettedPlayers(context.Sender!, context.Args[0], TargetSearchMode.IncludeSelf);
         if (players == null || !players.Any())
         {
             var localizer = GetPlayerLocalizer(context);
@@ -89,7 +89,7 @@ public partial class AdminCommands
             return;
         }
 
-        var players = Core.PlayerManager.FindTargettedPlayers(context.Sender!, context.Args[0], TargetSearchMode.None);
+        var players = Core.PlayerManager.FindTargettedPlayers(context.Sender!, context.Args[0], TargetSearchMode.IncludeSelf);
         if (players == null || !players.Any())
         {
             var localizer = GetPlayerLocalizer(context);
@@ -159,7 +159,7 @@ public partial class AdminCommands
             return;
         }
 
-        var players = Core.PlayerManager.FindTargettedPlayers(context.Sender!, context.Args[0], TargetSearchMode.None);
+        var players = Core.PlayerManager.FindTargettedPlayers(context.Sender!, context.Args[0], TargetSearchMode.IncludeSelf);
         if (players == null || !players.Any())
         {
             var localizer = GetPlayerLocalizer(context);
@@ -229,7 +229,7 @@ public partial class AdminCommands
             return;
         }
 
-        var players = Core.PlayerManager.FindTargettedPlayers(context.Sender!, context.Args[0], TargetSearchMode.None);
+        var players = Core.PlayerManager.FindTargettedPlayers(context.Sender!, context.Args[0], TargetSearchMode.IncludeSelf);
         if (players == null || !players.Any())
         {
             var localizer = GetPlayerLocalizer(context);

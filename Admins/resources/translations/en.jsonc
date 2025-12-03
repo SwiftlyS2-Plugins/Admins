@@ -1,8 +1,8 @@
 {
   "ban.kick_message": "You are banned from this server.\nReason: {0}\nExpires at: {1}\nBanned by: {2} ({3})",
   "never": "Never",
-  "gag.message": "{0} You are currently gagged by [green]{1}[default], you will be able to talk at [green]{2}[default].\n{0} Reason: [green]{3}[default]",
-  "mute.message": "{0} You are currently muted by [green]{1}[default], you will be able to talk at [green]{2}[default].\n{0} Reason: [green]{3}[default]",
+  "gag.message": "{0} You are currently gagged by [green]{1}[default], you will be able to talk at [green]{2}[default]. Reason: [green]{3}[default]",
+  "mute.message": "{0} You are currently muted by [green]{1}[default], you will be able to talk at [green]{2}[default]. Reason: [green]{3}[default]",
   "admins.player_chat_format": "[green](To Admins) {0}[default]: {1}",
   "admins.admin_chat_format": "[green](Admin Chat) {0}[default]: {1}",
   "command.syntax": "{0} Syntax: {1}{2} {3}",
@@ -26,5 +26,7 @@
   "command.slay_success": "{0} [green]{1}[default] has slain player '[green]{2}[default]'.",
   "command.slap_success": "{0} [green]{1}[default] has slapped player '[green]{2}[default]'.",
   "command.rename_success": "{0} [green]{1}[default] has renamed player '[green]{2}[default]' to '[green]{3}[default]'.",
-  "command.invalid_time_format": "{0} The time format '[green]{1}[default]' is invalid. Use relative time (ex. 7d, 12h, 30m, 15s)."
+  "command.invalid_time_format": "{0} The time format '[green]{1}[default]' is invalid. Use relative time (ex. 7d, 12h, 30m, 15s).",
+  "adminmenu.title": "Admin Menu",
+  "adminmenu.sanctions.title": "Sanctions"
 }

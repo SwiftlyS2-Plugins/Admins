@@ -88,4 +88,9 @@ public interface IAdminAPIv1
     /// Gets the Admin Sanctions API.
     /// </summary>
     public IAdminSanctionsAPIv1 AdminSanctionsAPI { get; }
+
+    /// <summary>
+    /// Gets the Admin Menu API.
+    /// </summary>
+    public IAdminMenuAPIv1 AdminMenuAPI { get; }
 }

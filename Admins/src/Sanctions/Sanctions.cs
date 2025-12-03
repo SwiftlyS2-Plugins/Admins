@@ -2,6 +2,7 @@ using Admins.Bans;
 using Admins.Contract;
 using Admins.Database.Models;
 using Dommel;
+using SwiftlyS2.Core.Menus.OptionsBase;
 using SwiftlyS2.Shared;
 using SwiftlyS2.Shared.Players;
 
@@ -9,9 +10,6 @@ namespace Admins.Sanctions;
 
 public partial class ServerSanctions
 {
-    [SwiftlyInject]
-    private static ISwiftlyCore Core = null!;
-
     public static List<ISanction> Sanctions { get; set; } = [];
     public static Dictionary<ulong, VoiceFlagValue> OriginalVoiceFlags = new();
 
@@ -21,7 +19,7 @@ public partial class ServerSanctions
 
         Task.Run(() =>
         {
-            var database = Core.Database.GetConnection("admins");
+            var database = Admins.SwiftlyCore.Database.GetConnection("admins");
             SetSanctions([.. database.GetAll<Sanction>()]);
             onLoaded?.Invoke();
         });
@@ -44,7 +42,7 @@ public partial class ServerSanctions
 
     public static void ScheduleCheck()
     {
-        var players = Core.PlayerManager.GetAllPlayers();
+        var players = Admins.SwiftlyCore.PlayerManager.GetAllPlayers();
         foreach (var player in players)
         {
             if (player.IsFakeClient) continue;
@@ -56,7 +54,7 @@ public partial class ServerSanctions
                 {
                     OriginalVoiceFlags[player.SteamID] = player.VoiceFlags;
                     player.VoiceFlags = VoiceFlagValue.Muted;
-                    var localizer = Core.Translation.GetPlayerLocalizer(player);
+                    var localizer = Admins.SwiftlyCore.Translation.GetPlayerLocalizer(player);
                     string muteMessage = localizer[
                         "mute.message",
                         Admins.Config.CurrentValue.Prefix,
@@ -84,7 +82,7 @@ public partial class ServerSanctions
         {
             if (Admins.Config.CurrentValue.UseDatabase)
             {
-                var database = Core.Database.GetConnection("admins");
+                var database = Admins.SwiftlyCore.Database.GetConnection("admins");
                 var id = database.Insert((Sanction)sanction);
                 sanction.Id = (ulong)id;
             }
@@ -99,7 +97,7 @@ public partial class ServerSanctions
         {
             if (Admins.Config.CurrentValue.UseDatabase)
             {
-                var database = Core.Database.GetConnection("admins");
+                var database = Admins.SwiftlyCore.Database.GetConnection("admins");
                 database.Delete((Sanction)sanction);
             }
             Sanctions.Remove(sanction);
@@ -113,7 +111,7 @@ public partial class ServerSanctions
         {
             if (Admins.Config.CurrentValue.UseDatabase)
             {
-                var database = Core.Database.GetConnection("admins");
+                var database = Admins.SwiftlyCore.Database.GetConnection("admins");
                 database.Update((Sanction)sanction);
             }
             Sanctions.RemoveAt(Sanctions.FindIndex(s => s.Id == sanction.Id));
@@ -128,7 +126,7 @@ public partial class ServerSanctions
         {
             if (Admins.Config.CurrentValue.UseDatabase)
             {
-                var database = Core.Database.GetConnection("admins");
+                var database = Admins.SwiftlyCore.Database.GetConnection("admins");
                 database.DeleteAll<Sanction>();
             }
             Sanctions.Clear();
@@ -169,5 +167,17 @@ public partial class ServerSanctions
 
         sanction = sanctions.Find(sanction => sanction.SanctionType == SanctionKind.Gag);
         return sanction != null;
+    }
+
+    public static void RegisterAdminSubmenu()
+    {
+        Admins.AdminsMenuAPI.RegisterSubmenu(
+            "adminmenu.sanctions.title",
+            ["admins.menu.sanctions"],
+            (player, key) => Admins.SwiftlyCore.Translation.GetPlayerLocalizer(player)[key],
+            Admins.SwiftlyCore.MenusAPI.CreateBuilder()
+                .AddOption(new ButtonMenuOption("Test Text"))
+                .Build()
+        );
     }
 }

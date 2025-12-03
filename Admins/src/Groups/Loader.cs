@@ -7,9 +7,6 @@ namespace Admins.Groups;
 
 public partial class Groups
 {
-    [SwiftlyInject]
-    private static ISwiftlyCore Core = null!;
-
     public static List<Group> AllGroups { get; private set; } = new();
 
     public static void Load()
@@ -22,7 +19,7 @@ public partial class Groups
                 ServerAdmins.ServerAdmins.UnassignAdmin(player, admin);
             }
 
-            var database = Core.Database.GetConnection("admins");
+            var database = Admins.SwiftlyCore.Database.GetConnection("admins");
             AllGroups = [.. database.GetAll<Group>()];
 
             ServerAdmins.ServerAdmins.Load();

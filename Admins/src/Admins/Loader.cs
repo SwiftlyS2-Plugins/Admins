@@ -1,6 +1,8 @@
 using System.Collections.Concurrent;
+using Admins.API;
 using Admins.Database.Models;
 using Dommel;
+using Microsoft.Extensions.DependencyInjection;
 using SwiftlyS2.Shared;
 using SwiftlyS2.Shared.Players;
 
@@ -8,7 +10,6 @@ namespace Admins.ServerAdmins;
 
 public partial class ServerAdmins
 {
-    [SwiftlyInject]
     private static ISwiftlyCore Core = null!;
 
     public static List<Admin> AllAdmins { get; private set; } = new();
@@ -16,6 +17,8 @@ public partial class ServerAdmins
 
     public static void Load()
     {
+        Core = Admins.SwiftlyCore;
+
         Task.Run(() =>
         {
             foreach (var (player, admin) in PlayerAdmins)
