@@ -52,9 +52,13 @@
     <ProjectReference Include="../Admins.Core.Contract/Admins.Core.Contract.csproj" />
   </ItemGroup>
 
-  <ItemGroup>
-    <Compile Remove="examples\**\*.cs" />
-  </ItemGroup>
+  <Target Name="CopyContractToExports" AfterTargets="Build">
+		<Copy SourceFiles="$(MSBuildThisFileDirectory)../Admins.Core.Contract/build/$(TargetFramework)/Admins.Core.Contract.dll" DestinationFolder="$(MSBuildThisFileDirectory)resources/exports/" />
+	</Target>
+
+	<Target Name="CopyContractToExports" AfterTargets="Publish">
+		<Copy SourceFiles="$(MSBuildThisFileDirectory)../Admins.Core.Contract/build/$(TargetFramework)/Admins.Core.Contract.dll" DestinationFolder="$(PublishDir)resources/exports/" />
+	</Target>
 
   <Target Name="CreateZip" AfterTargets="Publish">
     <ItemGroup>

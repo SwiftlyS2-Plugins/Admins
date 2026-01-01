@@ -1,0 +1,17 @@
+{
+    "never": "Never",
+    "ban.kick_message": "You are banned from this server.\nReason: {0}\nExpires at: {1}\nBanned by: {2} ({3})",
+    "command.unban_success": "{0} [green]{1}[default] removed {2} ban(s) for SteamID64 [green]{3}[default].",
+    "command.unban_none": "{0} No active bans found for SteamID64 [green]{1}[default].",
+    "command.unbanip_success": "{0} [green]{1}[default] removed {2} ban(s) for IP [green]{3}[default].",
+    "command.unbanip_none": "{0} No active bans found for IP [green]{1}[default].",
+    "command.bano_success": "{0} [green]{1}[default] banned {2} until [green]{3}[default] {4}. Reason: {5}",
+    "command.banipo_success": "{0} [green]{1}[default] banned {2} until [green]{3}[default] {4}. Reason: {5}",
+
+    "command.syntax": "{0} Syntax: {1}{2} {3}",
+    "command.player_only": "{0} This command can only be used by players.",
+    "command.player_not_found": "{0} No player was found with target '[green]{1}[default]'.",
+    "command.invalid_time_format": "{0} The time format '[green]{1}[default]' is invalid. Use relative time (ex. 7d, 12h, 30m, 15s).",
+    "command.invalid_steamid": "{0} Invalid SteamID64 format: [green]{1}[default]",
+    "command.invalid_value_range": "{0} The value '[green]{1}[default]' is invalid for argument '[green]{2}[default]' ([green]{3}-{4}[default])."
+}

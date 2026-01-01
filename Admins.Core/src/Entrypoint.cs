@@ -45,7 +45,6 @@ public partial class AdminsCore : BasePlugin
             .BindConfiguration("Main");
 
         _serviceProvider = services.BuildServiceProvider();
-
         var serverLoader = _serviceProvider.GetRequiredService<ServerLoader>();
         var serverAdmins = _serviceProvider.GetRequiredService<ServerAdmins>();
         var serverGroups = _serviceProvider.GetRequiredService<ServerGroups>();
@@ -54,12 +53,14 @@ public partial class AdminsCore : BasePlugin
         var adminsManager = _serviceProvider.GetRequiredService<AdminsManager>();
         var configurationManager = _serviceProvider.GetRequiredService<Config.ConfigurationManager>();
 
+        serverAdmins.SetAdminsManager(adminsManager);
+        adminsManager.SetServerAdmins(serverAdmins);
+
         serverGroups.Load();
     }
 
     public override void Unload()
     {
-        _serviceProvider!.Dispose();
     }
 
     public override void ConfigureSharedInterface(IInterfaceManager interfaceManager)

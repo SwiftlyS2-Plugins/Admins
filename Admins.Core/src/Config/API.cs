@@ -5,9 +5,9 @@ namespace Admins.Core.Config;
 
 public class ConfigurationManager : IConfigurationManager
 {
-    private IOptionsMonitor<ICoreConfiguration>? _configMonitor;
+    private IOptionsMonitor<CoreConfiguration>? _configMonitor;
 
-    public ConfigurationManager(IOptionsMonitor<ICoreConfiguration> configMonitor)
+    public ConfigurationManager(IOptionsMonitor<CoreConfiguration> configMonitor)
     {
         _configMonitor = configMonitor;
     }

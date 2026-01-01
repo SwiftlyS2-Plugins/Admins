@@ -7,10 +7,9 @@
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
     <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
-    <AssemblyName>Admins.Menu</AssemblyName>
+    <AssemblyName>Admins.Bans.Contract</AssemblyName>
     <OutputPath>$(MSBuildThisFileDirectory)build/</OutputPath>
-    <PublishDir>$(OutputPath)publish/Admins.Menu</PublishDir>
-    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+    <PublishDir>$(OutputPath)publish/Admins.Bans.Contract</PublishDir>
   </PropertyGroup>
 
   <ItemGroup>
@@ -23,26 +22,8 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Content Include="resources/gamedata/**/*;resources/templates/**/*;resources/translations/**/*">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </Content>
+    <Compile Remove="examples\**\*.cs" />
   </ItemGroup>
-
-  <ItemGroup>
-    <ProjectReference Include="../Admins.Menu.Contract/Admins.Menu.Contract.csproj" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <ProjectReference Include="../Admins.Core.Contract/Admins.Core.Contract.csproj" />
-  </ItemGroup>
-
-  <Target Name="CopyContractToExports" AfterTargets="Build">
-		<Copy SourceFiles="$(MSBuildThisFileDirectory)../Admins.Menu.Contract/build/$(TargetFramework)/Admins.Menu.Contract.dll" DestinationFolder="$(MSBuildThisFileDirectory)resources/exports/" />
-	</Target>
-
-	<Target Name="CopyContractToExports" AfterTargets="Publish">
-		<Copy SourceFiles="$(MSBuildThisFileDirectory)../Admins.Menu.Contract/build/$(TargetFramework)/Admins.Menu.Contract.dll" DestinationFolder="$(PublishDir)resources/exports/" />
-	</Target>
 
   <Target Name="CreateZip" AfterTargets="Publish">
     <ItemGroup>

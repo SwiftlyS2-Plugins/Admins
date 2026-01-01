@@ -14,18 +14,21 @@ namespace Admins.Core.Admins;
 public partial class ServerAdmins
 {
     private ISwiftlyCore Core = null!;
-
     public static ConcurrentDictionary<ulong, Admin> AllAdmins { get; set; } = [];
     public static ConcurrentDictionary<IPlayer, Admin> OnlineAdmins { get; set; } = [];
     private IOptionsMonitor<CoreConfiguration>? _config;
-    private AdminsManager _adminsManager;
+    private AdminsManager? _adminsManager;
 
-    public ServerAdmins(IOptionsMonitor<CoreConfiguration> config, ISwiftlyCore core, AdminsManager adminsManager)
+    public ServerAdmins(IOptionsMonitor<CoreConfiguration> config, ISwiftlyCore core)
     {
         core.Registrator.Register(this);
         _config = config;
-        _adminsManager = adminsManager;
         Core = core;
+    }
+
+    public void SetAdminsManager(AdminsManager adminsManager)
+    {
+        _adminsManager = adminsManager;
     }
 
     public void Load()
@@ -85,7 +88,7 @@ public partial class ServerAdmins
             }
         }
 
-        _adminsManager.TriggerOnAdminLoad(player, admin);
+        _adminsManager?.TriggerOnAdminLoad(player, admin);
     }
 
     public void UnassignAdmin(IPlayer player, Admin admin)

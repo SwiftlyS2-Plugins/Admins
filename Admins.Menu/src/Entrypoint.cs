@@ -4,6 +4,7 @@ using Admins.Menu.Menu;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using SwiftlyS2.Shared;
+using SwiftlyS2.Shared.Commands;
 using SwiftlyS2.Shared.Plugins;
 
 namespace Admins.Menu;
@@ -40,11 +41,25 @@ public partial class AdminsMenu : BasePlugin
 
     public override void Unload()
     {
-        _serviceProvider!.Dispose();
     }
 
     public override void ConfigureSharedInterface(IInterfaceManager interfaceManager)
     {
         interfaceManager.AddSharedInterface<IAdminMenuAPI, AdminMenuAPI>("Admins.Menu.V1", _serviceProvider!.GetRequiredService<AdminMenuAPI>());
+    }
+
+    [Command("admin", permission: "admins.commands.admin")]
+    public void OpenAdminMenuCommand(ICommandContext context)
+    {
+        if (!context.IsSentByPlayer)
+        {
+            context.Reply("This command can only be used by players.");
+            return;
+        }
+
+        var adminMenu = _serviceProvider!.GetRequiredService<AdminMenu>();
+        var menu = adminMenu.CreateAdminMenu(context.Sender!);
+
+        Core.MenusAPI.OpenMenuForPlayer(context.Sender!, menu);
     }
 }
