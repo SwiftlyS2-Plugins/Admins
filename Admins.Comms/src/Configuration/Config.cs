@@ -6,7 +6,7 @@ public class CommsConfiguration : ICommsConfiguration
 {
     // <inheritdoc/>
     public List<string> CommsReasons { get; set; } = [
-         "Obscene language",
+        "Obscene language",
         "Insult players",
         "Admin disrespect",
         "Inappropriate language",

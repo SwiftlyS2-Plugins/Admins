@@ -34,7 +34,7 @@ public class BansManager : IBansManager
             if (_configurationManager.GetConfigurationMonitor()!.CurrentValue.UseDatabase == true)
             {
                 var db = Core.Database.GetConnection("admins");
-                ban.Id = (ulong)await db.InsertAsync((Ban)ban);
+                ban.Id = (ulong)(long)await db.InsertAsync((Ban)ban);
             }
 
             ServerBans.AllBans.TryAdd(ban.Id, ban);

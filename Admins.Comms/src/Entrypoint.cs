@@ -62,6 +62,7 @@ public partial class AdminsComms : BasePlugin
 
     public override void Unload()
     {
+        _adminMenu!.UnloadAdminMenu();
     }
 
     public override void OnAllPluginsLoaded()
@@ -84,6 +85,7 @@ public partial class AdminsComms : BasePlugin
             _commsManager!.SetConfigurationManager(_configurationManager);
             _serverCommands!.SetConfigurationManager(_configurationManager);
             _gamePlayer!.SetConfigurationManager(_configurationManager);
+            _adminMenu!.SetConfigurationManager(_configurationManager);
         }
 
         if (interfaceManager.HasSharedInterface("Admins.Server.V1"))
@@ -92,6 +94,7 @@ public partial class AdminsComms : BasePlugin
 
             _serverComms!.SetServerManager(_serverManager);
             _serverCommands!.SetServerManager(_serverManager);
+            _adminMenu!.SetServerManager(_serverManager);
         }
 
         if (interfaceManager.HasSharedInterface("Admins.Menu.V1"))
@@ -102,5 +105,6 @@ public partial class AdminsComms : BasePlugin
         }
 
         _serverComms!.Load();
+        _adminMenu!.LoadAdminMenu();
     }
 }
