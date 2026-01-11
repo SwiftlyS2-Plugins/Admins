@@ -37,7 +37,7 @@ public partial class ServerCommands
 
     private async void HandleGiveAdmin(ICommandContext context)
     {
-        if (!await ValidateArgsCountAsync(context, 4, "admins give", ["<steamid64>", "<username>", "<immunity>", "[group_names]", "[permissions]", "[server_guids]"]))
+        if (!await ValidateArgsCountAsync(context, 4, "admins give", ["<steamid64>", "<username>", "<immunity>", "[permissions]", "[groups]", "[server_guids]"]))
             return;
 
         var args = context.Args;
@@ -58,12 +58,12 @@ public partial class ServerCommands
             return;
         }
 
-        var groups = args.Length > 4 && !string.IsNullOrEmpty(args[4])
-            ? args[4].Split(',', StringSplitOptions.RemoveEmptyEntries).Select(g => g.Trim()).ToList()
+        var permissions = args.Length > 4 && !string.IsNullOrEmpty(args[4])
+            ? args[4].Split(',', StringSplitOptions.RemoveEmptyEntries).Select(p => p.Trim()).ToList()
             : new List<string>();
 
-        var permissions = args.Length > 5 && !string.IsNullOrEmpty(args[5])
-            ? args[5].Split(',', StringSplitOptions.RemoveEmptyEntries).Select(p => p.Trim()).ToList()
+        var groups = args.Length > 5 && !string.IsNullOrEmpty(args[5])
+            ? args[5].Split(',', StringSplitOptions.RemoveEmptyEntries).Select(g => g.Trim()).ToList()
             : new List<string>();
 
         var additionalServers = args.Length > 6 && !string.IsNullOrEmpty(args[6])
@@ -163,7 +163,7 @@ public partial class ServerCommands
 
     private async void HandleEditAdmin(ICommandContext context)
     {
-        if (!await ValidateArgsCountAsync(context, 4, "admins edit", ["<steamid64>", "<username>", "<immunity>", "[group_names]", "[permissions]", "[server_guids]"]))
+        if (!await ValidateArgsCountAsync(context, 4, "admins edit", ["<steamid64>", "<username>", "<immunity>", "[permissions]", "[groups]", "[server_guids]"]))
             return;
 
         var args = context.Args;
@@ -184,12 +184,12 @@ public partial class ServerCommands
             return;
         }
 
-        var groups = args.Length > 4 && !string.IsNullOrEmpty(args[4])
-            ? args[4].Split(',', StringSplitOptions.RemoveEmptyEntries).Select(g => g.Trim()).ToList()
+        var permissions = args.Length > 4 && !string.IsNullOrEmpty(args[4])
+            ? args[4].Split(',', StringSplitOptions.RemoveEmptyEntries).Select(p => p.Trim()).ToList()
             : new List<string>();
 
-        var permissions = args.Length > 5 && !string.IsNullOrEmpty(args[5])
-            ? args[5].Split(',', StringSplitOptions.RemoveEmptyEntries).Select(p => p.Trim()).ToList()
+        var groups = args.Length > 5 && !string.IsNullOrEmpty(args[5])
+            ? args[5].Split(',', StringSplitOptions.RemoveEmptyEntries).Select(g => g.Trim()).ToList()
             : new List<string>();
 
         var additionalServers = args.Length > 6 && !string.IsNullOrEmpty(args[6])
