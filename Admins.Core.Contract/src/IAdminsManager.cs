@@ -68,4 +68,23 @@ public interface IAdminsManager
     /// Event fired when an admin is loaded.
     /// </summary>
     event Action<IPlayer, IAdmin>? OnAdminLoad;
+
+    /// <summary>
+    /// Gets an admin by SteamID64 from the database asynchronously.
+    /// </summary>
+    /// <param name="steamId64">The SteamID64 to search for.</param>
+    /// <returns>The admin if found, otherwise null.</returns>
+    public Task<IAdmin?> GetAdminBySteamId64Async(ulong steamId64);
+
+    /// <summary>
+    /// Updates an existing admin in the database asynchronously.
+    /// </summary>
+    /// <param name="admin">The admin to update.</param>
+    public Task UpdateAdminAsync(IAdmin admin);
+
+    /// <summary>
+    /// Adds a new admin or updates an existing one in the database asynchronously.
+    /// </summary>
+    /// <param name="admin">The admin to add or update.</param>
+    public Task AddOrUpdateAdminAsync(IAdmin admin);
 }

@@ -120,4 +120,44 @@ public class AdminsManager : IAdminsManager
     {
         _serverAdmins?.UnassignAdmin(player, (Admin)admin);
     }
+
+    public async Task<IAdmin?> GetAdminBySteamId64Async(ulong steamId64)
+    {
+        if (_confMonitor!.CurrentValue.UseDatabase == true)
+        {
+            var db = _core.Database.GetConnection("admins");
+            var admins = await db.GetAllAsync<Admin>();
+            return admins.FirstOrDefault(a => a.SteamId64 == (long)steamId64);
+        }
+        return null;
+    }
+
+    public async Task UpdateAdminAsync(IAdmin admin)
+    {
+        if (_confMonitor!.CurrentValue.UseDatabase == true)
+        {
+            var db = _core.Database.GetConnection("admins");
+            await db.UpdateAsync((Admin)admin);
+            _serverAdmins?.Load();
+        }
+    }
+
+    public async Task AddOrUpdateAdminAsync(IAdmin admin)
+    {
+        if (_confMonitor!.CurrentValue.UseDatabase == true)
+        {
+            var db = _core.Database.GetConnection("admins");
+            var existing = await GetAdminBySteamId64Async((ulong)admin.SteamId64);
+
+            if (existing != null)
+            {
+                await db.UpdateAsync((Admin)admin);
+            }
+            else
+            {
+                await db.InsertAsync((Admin)admin);
+            }
+            _serverAdmins?.Load();
+        }
+    }
 }

@@ -1,4 +1,5 @@
 using Admins.Core.Admins;
+using Admins.Core.Commands;
 using Admins.Core.Config;
 using Admins.Core.Contract;
 using Admins.Core.Database;
@@ -7,9 +8,7 @@ using Admins.Core.Server;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using SwiftlyS2.Shared;
-using SwiftlyS2.Shared.Commands;
 using SwiftlyS2.Shared.Plugins;
-using SwiftlyS2.Shared.SchemaDefinitions;
 
 namespace Admins.Core;
 
@@ -40,6 +39,7 @@ public partial class AdminsCore : BasePlugin
             .AddSingleton<ServerManager>()
             .AddSingleton<GroupsManager>()
             .AddSingleton<AdminsManager>()
+            .AddSingleton<ServerCommands>()
             .AddSingleton<Config.ConfigurationManager>()
             .AddOptionsWithValidateOnStart<CoreConfiguration>()
             .BindConfiguration("Main");
@@ -52,6 +52,7 @@ public partial class AdminsCore : BasePlugin
         var groupsManager = _serviceProvider.GetRequiredService<GroupsManager>();
         var adminsManager = _serviceProvider.GetRequiredService<AdminsManager>();
         var configurationManager = _serviceProvider.GetRequiredService<Config.ConfigurationManager>();
+        _ = _serviceProvider.GetRequiredService<ServerCommands>();
 
         serverAdmins.SetAdminsManager(adminsManager);
         adminsManager.SetServerAdmins(serverAdmins);
