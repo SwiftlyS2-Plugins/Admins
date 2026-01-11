@@ -35,7 +35,7 @@ public partial class AdminsSuperCommands : BasePlugin
     {
     }
 
-    public override void ConfigureSharedInterface(IInterfaceManager interfaceManager)
+    public override void UseSharedInterface(IInterfaceManager interfaceManager)
     {
         if (interfaceManager.HasSharedInterface("Admins.Configuration.V1"))
         {
