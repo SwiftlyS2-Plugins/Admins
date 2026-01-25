@@ -16,6 +16,17 @@ public partial class GamePlayer
         Core = core;
         _serverBans = serverBans;
 
+        Core.Scheduler.RepeatBySeconds(5f, () =>
+        {
+            var players = Core.PlayerManager.GetAllPlayers();
+            foreach (var player in players)
+            {
+                if (player.IsFakeClient || !player.IsValid) continue;
+
+                _serverBans.CheckPlayer(player);
+            }
+        });
+
         core.Registrator.Register(this);
     }
 

@@ -20,4 +20,6 @@ public interface IBan
     string AdminName { get; set; }
     string Server { get; set; }
     bool GlobalBan { get; set; }
+    ulong CreatedAt { get; set; }
+    ulong UpdatedAt { get; set; }
 }

@@ -33,7 +33,7 @@ public class CommsManager : ICommsManager
             if (_configurationManager.GetConfigurationMonitor()!.CurrentValue.UseDatabase == true)
             {
                 var db = Core.Database.GetConnection("admins");
-                sanction.Id = (ulong)(long)await db.InsertAsync((Sanction)sanction);
+                sanction.Id = Convert.ToUInt64(await db.InsertAsync((Sanction)sanction));
             }
 
             ServerComms.AllSanctions.TryAdd(sanction.Id, sanction);

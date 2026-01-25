@@ -14,4 +14,8 @@ public interface ICoreConfiguration
     /// The time zone used for logging and timestamps.
     /// </summary>
     public string TimeZone { get; set; }
+    /// <summary>
+    /// The interval in seconds to sync bans from the database. Set to 0 to disable automatic sync.
+    /// </summary>
+    public float BansDatabaseSyncIntervalSeconds { get; set; }
 }

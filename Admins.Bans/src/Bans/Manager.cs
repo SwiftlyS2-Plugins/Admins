@@ -31,10 +31,14 @@ public class BansManager : IBansManager
     {
         Task.Run(async () =>
         {
+            var timestamp = (ulong)DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            ban.CreatedAt = timestamp;
+            ban.UpdatedAt = timestamp;
+
             if (_configurationManager.GetConfigurationMonitor()!.CurrentValue.UseDatabase == true)
             {
                 var db = Core.Database.GetConnection("admins");
-                ban.Id = (ulong)(long)await db.InsertAsync((Ban)ban);
+                ban.Id = Convert.ToUInt64(await db.InsertAsync((Ban)ban));
             }
 
             ServerBans.AllBans.TryAdd(ban.Id, ban);
@@ -70,10 +74,14 @@ public class BansManager : IBansManager
     {
         Task.Run(async () =>
         {
+            var currentTime = (ulong)DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            ban.ExpiresAt = currentTime;
+            ban.UpdatedAt = currentTime;
+
             if (_configurationManager.GetConfigurationMonitor()!.CurrentValue.UseDatabase == true)
             {
                 var db = Core.Database.GetConnection("admins");
-                await db.DeleteAsync((Ban)ban);
+                await db.UpdateAsync((Ban)ban);
             }
 
             ServerBans.AllBans.TryRemove(ban.Id, out _);
@@ -104,6 +112,8 @@ public class BansManager : IBansManager
     {
         Task.Run(async () =>
         {
+            ban.UpdatedAt = (ulong)DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+
             if (_configurationManager.GetConfigurationMonitor()!.CurrentValue.UseDatabase == true)
             {
                 var db = Core.Database.GetConnection("admins");

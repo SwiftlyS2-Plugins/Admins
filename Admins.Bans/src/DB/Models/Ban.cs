@@ -42,4 +42,10 @@ public class Ban : IBan
 
     [Column("GlobalBan")]
     public bool GlobalBan { get; set; }
+
+    [Column("CreatedAt")]
+    public ulong CreatedAt { get; set; }
+
+    [Column("UpdatedAt")]
+    public ulong UpdatedAt { get; set; }
 }

@@ -9,6 +9,7 @@ using Admins.Core.Contract;
 using Admins.Menu.Contract;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using SwiftlyS2.Shared;
 using SwiftlyS2.Shared.Plugins;
 
@@ -104,5 +105,33 @@ public partial class AdminsBans : BasePlugin
 
         _serverBans!.Load();
         _adminMenu!.LoadAdminMenu();
+
+        // Start periodic bans sync if enabled
+        StartBansSyncTimer();
+    }
+
+    private void StartBansSyncTimer()
+    {
+        if (_configurationManager?.GetConfigurationMonitor()?.CurrentValue == null)
+            return;
+
+        var intervalSeconds = _configurationManager.GetConfigurationMonitor()!.CurrentValue.BansDatabaseSyncIntervalSeconds;
+
+        if (intervalSeconds > 0 && _configurationManager.GetConfigurationMonitor()!.CurrentValue.UseDatabase)
+        {
+            Core.Logger.LogInformation($"Starting database sync timer with interval of {intervalSeconds} seconds");
+
+            Core.Scheduler.RepeatBySeconds(intervalSeconds, () =>
+            {
+                Task.Run(async () =>
+                {
+                    await _serverBans!.SyncBansFromDatabase();
+                });
+            });
+        }
+        else
+        {
+            Core.Logger.LogInformation("Database sync is disabled");
+        }
     }
 }
