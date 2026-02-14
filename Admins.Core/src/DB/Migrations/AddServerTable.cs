@@ -2,21 +2,27 @@ using FluentMigrator;
 
 namespace Admins.Core.Database.Migrations;
 
-[Migration(1762730148)]
-public class AddServerTable : Migration
+[Migration(20270214103911)]
+public class Admins_AddServerTable : Migration
 {
     public override void Up()
     {
-        Create.Table("Servers")
+        if (!Schema.Table("admins-servers").Exists())
+        {
+            Create.Table("admins-servers")
             .WithColumn("Id").AsInt64().PrimaryKey().Identity()
             .WithColumn("IP").AsString(45).NotNullable()
             .WithColumn("Port").AsInt32().NotNullable()
             .WithColumn("Hostname").AsString(255).NotNullable()
             .WithColumn("GUID").AsString(255).NotNullable();
+        }
     }
 
     public override void Down()
     {
-        Delete.Table("Servers");
+        if (Schema.Table("admins-servers").Exists())
+        {
+            Delete.Table("admins-servers");
+        }
     }
 }

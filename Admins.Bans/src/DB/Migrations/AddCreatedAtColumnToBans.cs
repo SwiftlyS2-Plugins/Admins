@@ -2,17 +2,23 @@ using FluentMigrator;
 
 namespace Admins.Bans.Database.Migrations;
 
-[Migration(1762800000)]
-public class AddCreatedAtColumnToBans : Migration
+[Migration(20270214103915)]
+public class Admins_AddCreatedAtColumnToBans : Migration
 {
     public override void Up()
     {
-        Alter.Table("Bans")
-            .AddColumn("CreatedAt").AsInt64().NotNullable().WithDefaultValue(0);
+        if (Schema.Table("admins-bans").Exists() && !Schema.Table("admins-bans").Column("CreatedAt").Exists())
+        {
+            Alter.Table("admins-bans")
+                .AddColumn("CreatedAt").AsInt64().NotNullable().WithDefaultValue(0);
+        }
     }
 
     public override void Down()
     {
-        Delete.Column("CreatedAt").FromTable("Bans");
+        if (Schema.Table("admins-bans").Column("CreatedAt").Exists())
+        {
+            Delete.Column("CreatedAt").FromTable("admins-bans");
+        }
     }
 }
