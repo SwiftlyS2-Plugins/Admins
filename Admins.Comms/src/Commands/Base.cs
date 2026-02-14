@@ -146,7 +146,7 @@ public partial class ServerCommands
             return null;
         }
 
-        return players.ToList();
+        return [.. players];
     }
 
     /// <summary>
