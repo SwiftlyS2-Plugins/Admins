@@ -9,7 +9,7 @@ namespace Admins.SuperCommands.Commands;
 
 public partial class ServerCommands
 {
-    private ISwiftlyCore Core = null!;
+    private readonly ISwiftlyCore Core = null!;
     private IConfigurationManager ConfigurationManager = null!;
 
     public ServerCommands(ISwiftlyCore core)
@@ -133,7 +133,7 @@ public partial class ServerCommands
             return null;
         }
 
-        return players.ToList();
+        return [.. players];
     }
 
     /// <summary>
