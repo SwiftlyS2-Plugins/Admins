@@ -1,4 +1,5 @@
 using SwiftlyS2.Shared.Commands;
+using SwiftlyS2.Shared.Natives;
 using SwiftlyS2.Shared.Players;
 using SwiftlyS2.Shared.SchemaDefinitions;
 
@@ -512,10 +513,14 @@ public partial class ServerCommands
         }
         else
         {
-            pawn.Velocity.X.Value += (float)Random.Shared.NextInt64(50, 230) * (Random.Shared.NextDouble() < 0.5 ? -1 : 1);
-            pawn.Velocity.Y.Value += (float)Random.Shared.NextInt64(50, 230) * (Random.Shared.NextDouble() < 0.5 ? -1 : 1);
-            pawn.Velocity.Z.Value += Random.Shared.NextInt64(100, 300);
+            var velocity = new Vector(
+                (float)Random.Shared.NextInt64(50, 230) * (Random.Shared.NextDouble() < 0.5 ? -1 : 1),
+                (float)Random.Shared.NextInt64(50, 230) * (Random.Shared.NextDouble() < 0.5 ? -1 : 1),
+                Random.Shared.NextInt64(100, 300)
+            );
             pawn.VelocityUpdated();
+
+            pawn.Teleport(null, null, velocity);
         }
     }
 
