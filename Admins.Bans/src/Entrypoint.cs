@@ -77,36 +77,75 @@ public partial class AdminsBans : BasePlugin
 
     public override void UseSharedInterface(IInterfaceManager interfaceManager)
     {
-        if (interfaceManager.HasSharedInterface("Admins.Configuration.V1"))
+        try
         {
-            _configurationManager = interfaceManager.GetSharedInterface<Core.Contract.IConfigurationManager>("Admins.Configuration.V1");
+            if (interfaceManager.HasSharedInterface("Admins.Configuration.V1"))
+            {
+                _configurationManager = interfaceManager.GetSharedInterface<Core.Contract.IConfigurationManager>("Admins.Configuration.V1");
 
-            _serverBans!.SetConfigurationManager(_configurationManager);
-            _bansManager!.SetConfigurationManager(_configurationManager);
-            _serverCommands!.SetConfigurationManager(_configurationManager);
-            _adminMenu!.SetConfigurationManager(_configurationManager);
+                _serverBans!.SetConfigurationManager(_configurationManager);
+                _bansManager!.SetConfigurationManager(_configurationManager);
+                _serverCommands!.SetConfigurationManager(_configurationManager);
+                _adminMenu!.SetConfigurationManager(_configurationManager);
+            }
+            else
+            {
+                Core.Logger.LogWarning("Admins.Core is not loaded yet. IConfigurationManager interface not available.");
+            }
+        }
+        catch (Exception ex)
+        {
+            Core.Logger.LogError(ex, "Failed to get IConfigurationManager from Admins.Core. Make sure Admins.Core is loaded before Admins.Bans.");
         }
 
-        if (interfaceManager.HasSharedInterface("Admins.Server.V1"))
+        try
         {
-            _serverManager = interfaceManager.GetSharedInterface<IServerManager>("Admins.Server.V1");
+            if (interfaceManager.HasSharedInterface("Admins.Server.V1"))
+            {
+                _serverManager = interfaceManager.GetSharedInterface<IServerManager>("Admins.Server.V1");
 
-            _serverBans!.SetServerManager(_serverManager);
-            _serverCommands!.SetServerManager(_serverManager);
-            _adminMenu!.SetServerManager(_serverManager);
+                _serverBans!.SetServerManager(_serverManager);
+                _serverCommands!.SetServerManager(_serverManager);
+                _adminMenu!.SetServerManager(_serverManager);
+            }
+            else
+            {
+                Core.Logger.LogWarning("Admins.Core is not loaded yet. IServerManager interface not available.");
+            }
+        }
+        catch (Exception ex)
+        {
+            Core.Logger.LogError(ex, "Failed to get IServerManager from Admins.Core. Make sure Admins.Core is loaded before Admins.Bans.");
         }
 
-        if (interfaceManager.HasSharedInterface("Admins.Menu.V1"))
+        try
         {
-            _adminMenuAPI = interfaceManager.GetSharedInterface<IAdminMenuAPI>("Admins.Menu.V1");
+            if (interfaceManager.HasSharedInterface("Admins.Menu.V1"))
+            {
+                _adminMenuAPI = interfaceManager.GetSharedInterface<IAdminMenuAPI>("Admins.Menu.V1");
 
-            _adminMenu!.SetAdminMenuAPI(_adminMenuAPI);
+                _adminMenu!.SetAdminMenuAPI(_adminMenuAPI);
+            }
+            else
+            {
+                Core.Logger.LogWarning("Admins.Menu is not loaded yet. IAdminMenuAPI interface not available.");
+            }
+        }
+        catch (Exception ex)
+        {
+            Core.Logger.LogError(ex, "Failed to get IAdminMenuAPI from Admins.Menu.");
         }
 
-        _serverBans!.Load();
-        _adminMenu!.LoadAdminMenu();
-
-        StartBansSyncTimer();
+        if (_configurationManager != null)
+        {
+            _serverBans!.Load();
+            _adminMenu!.LoadAdminMenu();
+            StartBansSyncTimer();
+        }
+        else
+        {
+            Core.Logger.LogError("Cannot initialize Admins.Bans: Required dependencies not available. Make sure Admins.Core is loaded first.");
+        }
     }
 
     private void StartBansSyncTimer()
