@@ -4,10 +4,10 @@ using Admins.Comms.Manager;
 using Admins.Core.Contract;
 using Microsoft.Extensions.Options;
 using SwiftlyS2.Shared;
-using SwiftlyS2.Shared.Commands;
 using SwiftlyS2.Shared.Events;
 using SwiftlyS2.Shared.Misc;
 using SwiftlyS2.Shared.Players;
+using SwiftlyS2.Shared.ProtobufDefinitions;
 
 namespace Admins.Comms.Players;
 
@@ -172,13 +172,16 @@ public partial class GamePlayer
         }
     }
 
-    [ClientChatHookHandler]
-    public HookResult OnClientChat(int playerId, string text, bool teamonly)
+    public HookResult HandleChatMessage(CUserMessageSayText2 msg)
     {
-        var player = Core.PlayerManager.GetPlayer(playerId);
-        if (player == null || player.IsFakeClient) return HookResult.Continue;
+        var player = Core.PlayerManager.GetPlayer(msg.Entityindex - 1);
+        if (player == null || player.IsFakeClient)
+            return HookResult.Continue;
 
-        if (ShouldHandleAdminChat(text, teamonly))
+        var text = msg.Param2;
+        var teamOnly = msg.Chat;
+
+        if (ShouldHandleAdminChat(text, teamOnly))
         {
             HandleAdminChat(player, text);
             return HookResult.Stop;

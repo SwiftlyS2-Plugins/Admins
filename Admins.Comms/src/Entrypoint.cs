@@ -11,7 +11,10 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using SwiftlyS2.Shared;
+using SwiftlyS2.Shared.Misc;
+using SwiftlyS2.Shared.NetMessages;
 using SwiftlyS2.Shared.Plugins;
+using SwiftlyS2.Shared.ProtobufDefinitions;
 
 namespace Admins.Comms;
 
@@ -185,5 +188,11 @@ public partial class AdminsComms : BasePlugin
         {
             Core.Logger.LogInformation("Online player sanction check is disabled (database not configured)");
         }
+    }
+
+    [ServerNetMessageHandler]
+    public HookResult OnChatMessage(CUserMessageSayText2 msg)
+    {
+        return _gamePlayer!.HandleChatMessage(msg);
     }
 }
