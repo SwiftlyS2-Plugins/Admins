@@ -174,6 +174,9 @@ public partial class GamePlayer
 
     public HookResult HandleChatMessage(CUserMessageSayText2 msg)
     {
+        if (msg.Entityindex <= 0)
+            return HookResult.Continue;
+
         var player = Core.PlayerManager.GetPlayer(msg.Entityindex - 1);
         if (player == null || player.IsFakeClient)
             return HookResult.Continue;
