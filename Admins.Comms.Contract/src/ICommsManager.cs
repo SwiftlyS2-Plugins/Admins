@@ -3,16 +3,21 @@ namespace Admins.Comms.Contract;
 public interface ICommsManager
 {
     /// <summary>
+    /// Finds all sanctions matching the specified criteria.
+    /// </summary>
+    /// <param name="steamId64">Optional SteamID64 to filter by.</param>
+    /// <param name="playerIp">Optional IP address to filter by.</param>
+    /// <param name="sanctionKind">Optional sanction kind to filter by.</param>
+    /// <param name="sanctionType">Optional sanction type to filter by.</param>
+    /// <param name="status">Status filter: Active for active sanctions, Expired for expired sanctions, All for all sanctions.</param>
+    /// <returns>A list of sanctions matching the criteria.</returns>
+    public List<ISanction> FindSanctions(long? steamId64 = null, string? playerIp = null, SanctionKind? sanctionKind = null, SanctionType? sanctionType = null, RecordStatus status = RecordStatus.All);
+
+    /// <summary>
     /// Sets the list of communication sanctions.
     /// </summary>
     /// <param name="sanctions">The list of admin communication sanctions to set.</param>
     public void SetSanctions(List<ISanction> sanctions);
-
-    /// <summary>
-    /// Gets all admin communication sanctions.
-    /// </summary>
-    /// <returns>A list of all admin communication sanctions.</returns>
-    public List<ISanction> GetSanctions();
 
     /// <summary>
     /// Adds an admin communication sanction to the database.
@@ -36,15 +41,6 @@ public interface ICommsManager
     /// Clears all admin communication sanctions from the database.
     /// </summary>
     public void ClearSanctions();
-
-    /// <summary>
-    /// Finds an active communication sanction by SteamID64.
-    /// </summary>
-    /// <param name="steamId64">The SteamID64 of the player.</param>
-    /// <param name="playerIp">The IP address of the player.</param>
-    /// <param name="sanctionKind">The kind of sanction to find.</param>
-    /// <returns>The active admin communication sanction if found; otherwise, null.</returns>
-    public ISanction? FindActiveSanction(long steamId64, string playerIp, SanctionKind sanctionKind);
 
     /// <summary>
     /// Gets all admin communication sanctions from the database.

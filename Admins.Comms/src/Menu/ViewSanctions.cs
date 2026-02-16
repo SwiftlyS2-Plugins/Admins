@@ -102,9 +102,8 @@ public partial class AdminMenu
             .Design.SetVisualGuideLineColor(_adminMenuAPI.GetMenuColor())
             .Design.SetNavigationMarkerColor(_adminMenuAPI.GetMenuColor());
 
-        var sanctions = _commsManager.GetSanctions().Where(sanction =>
-            (sanction.ExpiresAt == 0 || sanction.ExpiresAt > currentTime) &&
-            (sanction.Server == ServerManager!.GetServerGUID() || sanction.GlobalSanction)
+        var sanctions = _commsManager.FindSanctions(status: RecordStatus.Active).Where(sanction =>
+            sanction.Server == ServerManager!.GetServerGUID() || sanction.GlobalSanction
         );
 
         foreach (var sanction in sanctions)

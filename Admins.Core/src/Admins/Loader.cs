@@ -4,7 +4,6 @@ using Admins.Core.Database.Models;
 using Admins.Core.Groups;
 using Admins.Core.Server;
 using Dommel;
-using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using SwiftlyS2.Shared;
 using SwiftlyS2.Shared.Players;

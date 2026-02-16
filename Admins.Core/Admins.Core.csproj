@@ -29,7 +29,7 @@
     <PackageReference Include="Microsoft.Extensions.Configuration.Json" Version="10.0.0" ExcludeAssets="runtime" PrivateAssets="all" />
     <PackageReference Include="Microsoft.Extensions.Configuration.Binder" Version="10.0.0" ExcludeAssets="runtime" PrivateAssets="all" />
     <PackageReference Include="Microsoft.Extensions.Logging" Version="10.0.0" ExcludeAssets="runtime" PrivateAssets="all" />
-    <PackageReference Include="SwiftlyS2.CS2" Version="1.0.5" ExcludeAssets="runtime" PrivateAssets="all" />
+    <PackageReference Include="SwiftlyS2.CS2" Version="*-*" ExcludeAssets="runtime" PrivateAssets="all" />
   </ItemGroup>
 
   <ItemGroup>
@@ -50,6 +50,8 @@
 
   <ItemGroup>
     <ProjectReference Include="../Admins.Core.Contract/Admins.Core.Contract.csproj" />
+    <ProjectReference Include="../Admins.Bans.Contract/Admins.Bans.Contract.csproj" />
+    <ProjectReference Include="../Admins.Comms.Contract/Admins.Comms.Contract.csproj" />
   </ItemGroup>
 
   <Target Name="CopyContractToExports" AfterTargets="Build">
@@ -64,8 +66,33 @@
     <ItemGroup>
       <PublishFiles Include="$(PublishDir)**\*.*" />
     </ItemGroup>
-    
+
     <ZipDirectory SourceDirectory="$(PublishDir)../" DestinationFile="$(OutputPath)../$(AssemblyName).zip" Overwrite="true" />
+  </Target>
+
+  <Target Name="RemoveRuntimeFolders" AfterTargets="Publish">
+    <RemoveDir Directories="$(PublishDir)runtimes" />
+  </Target>
+
+  <Target Name="RemoveUnnecessaryDependencies" AfterTargets="Publish">
+    <ItemGroup>
+      <UnnecessaryDeps Include="$(PublishDir)FluentMigrator.Runner.Db2.dll" />
+      <UnnecessaryDeps Include="$(PublishDir)FluentMigrator.Runner.Firebird.dll" />
+      <UnnecessaryDeps Include="$(PublishDir)FluentMigrator.Runner.Hana.dll" />
+      <UnnecessaryDeps Include="$(PublishDir)FluentMigrator.Runner.Oracle.dll" />
+      <UnnecessaryDeps Include="$(PublishDir)FluentMigrator.Runner.Redshift.dll" />
+      <UnnecessaryDeps Include="$(PublishDir)FluentMigrator.Runner.Snowflake.dll" />
+      <UnnecessaryDeps Include="$(PublishDir)FluentMigrator.Runner.SqlServer.dll" />
+      <UnnecessaryDeps Include="$(PublishDir)FluentMigrator.Extensions.SqlServer.dll" />
+      <UnnecessaryDeps Include="$(PublishDir)FluentMigrator.Extensions.Oracle.dll" />
+      <UnnecessaryDeps Include="$(PublishDir)FluentMigrator.Extensions.Snowflake.dll" />
+      <UnnecessaryDeps Include="$(PublishDir)Azure.*.dll" />
+      <UnnecessaryDeps Include="$(PublishDir)FirebirdSql.*.dll" />
+      <UnnecessaryDeps Include="$(PublishDir)Microsoft.Data.SqlClient.dll" />
+      <UnnecessaryDeps Include="$(PublishDir)Microsoft.SqlServer.*.dll" />
+      <UnnecessaryDeps Include="$(PublishDir)Microsoft.Identity*.dll" />
+    </ItemGroup>
+    <Delete Files="@(UnnecessaryDeps)" />
   </Target>
 
 </Project> 

@@ -11,16 +11,12 @@ public partial class ServerCommands
     [Command("ban", permission: "admins.commands.ban")]
     public void Command_Ban(ICommandContext context)
     {
-        if (!ValidateArgsCount(context, 3, "ban", ["<player>", "<time>", "<reason>"]))
+        if (!ValidateArgsCount(context, 3, "ban", ["<player|steamid64>", "<time>", "<reason>"]))
         {
             return;
         }
 
-        var players = FindTargetPlayers(context, context.Args[0]);
-        if (players == null)
-        {
-            return;
-        }
+        var players = Core.PlayerManager.FindTargettedPlayers(context.Sender!, context.Args[0], TargetSearchMode.IncludeSelf);
 
         if (!TryParseDuration(context, context.Args[1], out var duration))
         {
@@ -28,23 +24,42 @@ public partial class ServerCommands
         }
 
         var reason = string.Join(" ", context.Args.Skip(2));
-        ApplyBan(players, context, BanType.SteamID, duration, reason, isGlobal: false);
-        KickBannedPlayers(players);
+
+        if (players != null && players.Any())
+        {
+            ApplyBan(players.ToList(), context, BanType.SteamID, duration, reason, isGlobal: false);
+            KickBannedPlayers(players.ToList());
+        }
+        else if (TryParseSteamID(context, context.Args[0], out var steamId64))
+        {
+            // Check if this SteamID is currently online
+            var onlinePlayer = GetOnlinePlayerBySteamID(steamId64);
+            if (onlinePlayer != null)
+            {
+                ApplyBan([onlinePlayer], context, BanType.SteamID, duration, reason, isGlobal: false);
+                KickBannedPlayers([onlinePlayer]);
+            }
+            else
+            {
+                ApplyOfflineBan(context, steamId64, null, BanType.SteamID, duration, reason, isGlobal: false);
+            }
+        }
+        else
+        {
+            var localizer = GetPlayerLocalizer(context);
+            context.Reply(localizer["command.invalid_target", ConfigurationManager.GetCurrentConfiguration()!.Prefix, context.Args[0]]);
+        }
     }
 
     [Command("globalban", permission: "admins.commands.globalban")]
     public void Command_GlobalBan(ICommandContext context)
     {
-        if (!ValidateArgsCount(context, 3, "globalban", ["<player>", "<time>", "<reason>"]))
+        if (!ValidateArgsCount(context, 3, "globalban", ["<player|steamid64>", "<time>", "<reason>"]))
         {
             return;
         }
 
-        var players = FindTargetPlayers(context, context.Args[0]);
-        if (players == null)
-        {
-            return;
-        }
+        var players = Core.PlayerManager.FindTargettedPlayers(context.Sender!, context.Args[0], TargetSearchMode.IncludeSelf);
 
         if (!TryParseDuration(context, context.Args[1], out var duration))
         {
@@ -52,23 +67,42 @@ public partial class ServerCommands
         }
 
         var reason = string.Join(" ", context.Args.Skip(2));
-        ApplyBan(players, context, BanType.SteamID, duration, reason, isGlobal: true);
-        KickBannedPlayers(players);
+
+        if (players != null && players.Any())
+        {
+            ApplyBan(players.ToList(), context, BanType.SteamID, duration, reason, isGlobal: true);
+            KickBannedPlayers(players.ToList());
+        }
+        else if (TryParseSteamID(context, context.Args[0], out var steamId64))
+        {
+            // Check if this SteamID is currently online
+            var onlinePlayer = GetOnlinePlayerBySteamID(steamId64);
+            if (onlinePlayer != null)
+            {
+                ApplyBan([onlinePlayer], context, BanType.SteamID, duration, reason, isGlobal: true);
+                KickBannedPlayers([onlinePlayer]);
+            }
+            else
+            {
+                ApplyOfflineBan(context, steamId64, null, BanType.SteamID, duration, reason, isGlobal: true);
+            }
+        }
+        else
+        {
+            var localizer = GetPlayerLocalizer(context);
+            context.Reply(localizer["command.invalid_target", ConfigurationManager.GetCurrentConfiguration()!.Prefix, context.Args[0]]);
+        }
     }
 
     [Command("banip", permission: "admins.commands.ban")]
     public void Command_BanIp(ICommandContext context)
     {
-        if (!ValidateArgsCount(context, 3, "banip", ["<player>", "<time>", "<reason>"]))
+        if (!ValidateArgsCount(context, 3, "banip", ["<player|ip_address>", "<time>", "<reason>"]))
         {
             return;
         }
 
-        var players = FindTargetPlayers(context, context.Args[0]);
-        if (players == null)
-        {
-            return;
-        }
+        var players = Core.PlayerManager.FindTargettedPlayers(context.Sender!, context.Args[0], TargetSearchMode.IncludeSelf);
 
         if (!TryParseDuration(context, context.Args[1], out var duration))
         {
@@ -76,23 +110,29 @@ public partial class ServerCommands
         }
 
         var reason = string.Join(" ", context.Args.Skip(2));
-        ApplyBan(players, context, BanType.IP, duration, reason, isGlobal: false);
-        KickBannedPlayers(players);
+
+        if (players != null && players.Any())
+        {
+            ApplyBan(players.ToList(), context, BanType.IP, duration, reason, isGlobal: false);
+            KickBannedPlayers(players.ToList());
+        }
+        else
+        {
+            // Assume it's an IP address
+            var ipAddress = context.Args[0];
+            ApplyOfflineBan(context, 0, ipAddress, BanType.IP, duration, reason, isGlobal: false);
+        }
     }
 
     [Command("globalbanip", permission: "admins.commands.globalban")]
     public void Command_GlobalBanIp(ICommandContext context)
     {
-        if (!ValidateArgsCount(context, 3, "globalbanip", ["<player>", "<time>", "<reason>"]))
+        if (!ValidateArgsCount(context, 3, "globalbanip", ["<player|ip_address>", "<time>", "<reason>"]))
         {
             return;
         }
 
-        var players = FindTargetPlayers(context, context.Args[0]);
-        if (players == null)
-        {
-            return;
-        }
+        var players = Core.PlayerManager.FindTargettedPlayers(context.Sender!, context.Args[0], TargetSearchMode.IncludeSelf);
 
         if (!TryParseDuration(context, context.Args[1], out var duration))
         {
@@ -100,8 +140,18 @@ public partial class ServerCommands
         }
 
         var reason = string.Join(" ", context.Args.Skip(2));
-        ApplyBan(players, context, BanType.IP, duration, reason, isGlobal: true);
-        KickBannedPlayers(players);
+
+        if (players != null && players.Any())
+        {
+            ApplyBan(players.ToList(), context, BanType.IP, duration, reason, isGlobal: true);
+            KickBannedPlayers(players.ToList());
+        }
+        else
+        {
+            // Assume it's an IP address
+            var ipAddress = context.Args[0];
+            ApplyOfflineBan(context, 0, ipAddress, BanType.IP, duration, reason, isGlobal: true);
+        }
     }
 
     [Command("unban", permission: "admins.commands.unban")]
@@ -130,88 +180,6 @@ public partial class ServerCommands
 
         var ipAddress = context.Args[0];
         RemoveBanByIP(context, ipAddress);
-    }
-
-    [Command("bano", permission: "admins.commands.ban")]
-    public void Command_BanOffline(ICommandContext context)
-    {
-        if (!ValidateArgsCount(context, 3, "bano", ["<steamid64>", "<time>", "<reason>"]))
-        {
-            return;
-        }
-
-        if (!TryParseSteamID(context, context.Args[0], out var steamId64))
-        {
-            return;
-        }
-
-        if (!TryParseDuration(context, context.Args[1], out var duration))
-        {
-            return;
-        }
-
-        var reason = string.Join(" ", context.Args.Skip(2));
-        ApplyOfflineBan(context, steamId64, null, BanType.SteamID, duration, reason, isGlobal: false);
-    }
-
-    [Command("globalbano", permission: "admins.commands.globalban")]
-    public void Command_GlobalBanOffline(ICommandContext context)
-    {
-        if (!ValidateArgsCount(context, 3, "globalbano", ["<steamid64>", "<time>", "<reason>"]))
-        {
-            return;
-        }
-
-        if (!TryParseSteamID(context, context.Args[0], out var steamId64))
-        {
-            return;
-        }
-
-        if (!TryParseDuration(context, context.Args[1], out var duration))
-        {
-            return;
-        }
-
-        var reason = string.Join(" ", context.Args.Skip(2));
-        ApplyOfflineBan(context, steamId64, null, BanType.SteamID, duration, reason, isGlobal: true);
-    }
-
-    [Command("banipo", permission: "admins.commands.ban")]
-    public void Command_BanIpOffline(ICommandContext context)
-    {
-        if (!ValidateArgsCount(context, 3, "banipo", ["<ip_address>", "<time>", "<reason>"]))
-        {
-            return;
-        }
-
-        var ipAddress = context.Args[0];
-
-        if (!TryParseDuration(context, context.Args[1], out var duration))
-        {
-            return;
-        }
-
-        var reason = string.Join(" ", context.Args.Skip(2));
-        ApplyOfflineBan(context, 0, ipAddress, BanType.IP, duration, reason, isGlobal: false);
-    }
-
-    [Command("globalbanipo", permission: "admins.commands.globalban")]
-    public void Command_GlobalBanIpOffline(ICommandContext context)
-    {
-        if (!ValidateArgsCount(context, 3, "globalbanipo", ["<ip_address>", "<time>", "<reason>"]))
-        {
-            return;
-        }
-
-        var ipAddress = context.Args[0];
-
-        if (!TryParseDuration(context, context.Args[1], out var duration))
-        {
-            return;
-        }
-
-        var reason = string.Join(" ", context.Args.Skip(2));
-        ApplyOfflineBan(context, 0, ipAddress, BanType.IP, duration, reason, isGlobal: true);
     }
 
     public void ApplyBan(
@@ -287,13 +255,7 @@ public partial class ServerCommands
     private void RemoveBanBySteamID(ICommandContext context, long steamId64)
     {
         var adminName = GetAdminName(context);
-        var currentTime = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-
-        var bans = BanManager.GetBans()
-            .Where(b => b.SteamId64 == steamId64 &&
-                       b.BanType == BanType.SteamID &&
-                       (b.ExpiresAt == 0 || b.ExpiresAt > currentTime))
-            .ToList();
+        var bans = BanManager.FindBans(steamId64);
 
         foreach (var ban in bans)
         {
@@ -311,13 +273,7 @@ public partial class ServerCommands
     private void RemoveBanByIP(ICommandContext context, string ipAddress)
     {
         var adminName = GetAdminName(context);
-        var currentTime = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-
-        var bans = BanManager.GetBans()
-            .Where(b => b.PlayerIp == ipAddress &&
-                       b.BanType == BanType.IP &&
-                       (b.ExpiresAt == 0 || b.ExpiresAt > currentTime))
-            .ToList();
+        var bans = BanManager.FindBans(null, ipAddress);
 
         foreach (var ban in bans)
         {
@@ -330,6 +286,12 @@ public partial class ServerCommands
             ? localizer[messageKey, ConfigurationManager.GetCurrentConfiguration()!.Prefix, adminName, bans.Count, ipAddress]
             : localizer[messageKey, ConfigurationManager.GetCurrentConfiguration()!.Prefix, ipAddress];
         context.Reply(message);
+    }
+
+    private IPlayer? GetOnlinePlayerBySteamID(ulong steamId64)
+    {
+        var allPlayers = Core.PlayerManager.GetAllPlayers();
+        return allPlayers.FirstOrDefault(p => !p.IsFakeClient && p.IsValid && p.SteamID == steamId64);
     }
 
     private void ApplyOfflineBan(

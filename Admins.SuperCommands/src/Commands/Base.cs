@@ -2,14 +2,13 @@ using Admins.Core.Contract;
 using SwiftlyS2.Shared;
 using SwiftlyS2.Shared.Commands;
 using SwiftlyS2.Shared.Players;
-using SwiftlyS2.Shared.SteamAPI;
 using SwiftlyS2.Shared.Translation;
 
 namespace Admins.SuperCommands.Commands;
 
 public partial class ServerCommands
 {
-    private ISwiftlyCore Core = null!;
+    private readonly ISwiftlyCore Core = null!;
     private IConfigurationManager ConfigurationManager = null!;
 
     public ServerCommands(ISwiftlyCore core)
@@ -133,58 +132,7 @@ public partial class ServerCommands
             return null;
         }
 
-        return players.ToList();
-    }
-
-    /// <summary>
-    /// Tries to parse a SteamID64 string.
-    /// </summary>
-    /// <param name="context">The command context.</param>
-    /// <param name="steamIdString">The SteamID64 string to parse.</param>
-    /// <param name="steamId64">The parsed SteamID64.</param>
-    /// <returns>True if parsing succeeds, false otherwise.</returns>
-    private bool TryParseSteamID(ICommandContext context, string steamIdString, out ulong steamId64)
-    {
-        var steamid = new CSteamID(steamIdString);
-        if (!steamid.IsValid())
-        {
-            var localizer = GetPlayerLocalizer(context);
-            context.Reply(localizer[
-                "command.invalid_steamid",
-                ConfigurationManager.GetCurrentConfiguration()!.Prefix,
-                steamIdString
-            ]);
-
-            steamId64 = 0;
-            return false;
-        }
-
-        steamId64 = steamid.GetSteamID64();
-        return true;
-    }
-
-    /// <summary>
-    /// Gets the admin name from the command context.
-    /// </summary>
-    /// <param name="context">The command context.</param>
-    /// <returns>Admin name or "Console" if sent by server.</returns>
-    private string GetAdminName(ICommandContext context)
-    {
-        return context.IsSentByPlayer
-            ? context.Sender!.Controller.PlayerName
-            : "Console";
-    }
-
-    /// <summary>
-    /// Calculates expiration timestamp from duration.
-    /// </summary>
-    /// <param name="duration">The duration.</param>
-    /// <returns>Unix timestamp in milliseconds, or 0 for permanent.</returns>
-    public long CalculateExpiresAt(TimeSpan duration)
-    {
-        return duration.TotalMilliseconds == 0
-            ? 0
-            : DateTimeOffset.UtcNow.Add(duration).ToUnixTimeMilliseconds();
+        return [.. players];
     }
 
     /// <summary>
@@ -323,18 +271,5 @@ public partial class ServerCommands
         {
             return TimeZoneInfo.Utc;
         }
-    }
-
-    /// <summary>
-    /// Formats a Unix timestamp into a string in the configured time zone.
-    /// </summary>
-    /// <param name="unixTimeMilliseconds">The Unix timestamp in milliseconds.</param>
-    /// <returns>The formatted timestamp string.</returns>
-    public string FormatTimestampInTimeZone(long unixTimeMilliseconds)
-    {
-        var utcTime = DateTimeOffset.FromUnixTimeMilliseconds(unixTimeMilliseconds);
-        var timeZone = GetConfiguredTimeZone();
-        var localTime = TimeZoneInfo.ConvertTime(utcTime, timeZone);
-        return localTime.ToString("yyyy-MM-dd HH:mm:ss");
     }
 }

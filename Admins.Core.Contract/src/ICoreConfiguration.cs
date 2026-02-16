@@ -15,6 +15,10 @@ public interface ICoreConfiguration
     /// </summary>
     public string TimeZone { get; set; }
     /// <summary>
+    /// The interval in seconds to sync admins from the database. Set to 0 to disable automatic sync.
+    /// </summary>
+    public float AdminsDatabaseSyncIntervalSeconds { get; set; }
+    /// <summary>
     /// The interval in seconds to sync bans from the database. Set to 0 to disable automatic sync.
     /// </summary>
     public float BansDatabaseSyncIntervalSeconds { get; set; }

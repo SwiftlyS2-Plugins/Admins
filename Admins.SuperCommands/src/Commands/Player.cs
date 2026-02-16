@@ -1,4 +1,5 @@
 using SwiftlyS2.Shared.Commands;
+using SwiftlyS2.Shared.Natives;
 using SwiftlyS2.Shared.Players;
 using SwiftlyS2.Shared.SchemaDefinitions;
 
@@ -512,10 +513,13 @@ public partial class ServerCommands
         }
         else
         {
-            pawn.Velocity.X.Value += (float)Random.Shared.NextInt64(50, 230) * (Random.Shared.NextDouble() < 0.5 ? -1 : 1);
-            pawn.Velocity.Y.Value += (float)Random.Shared.NextInt64(50, 230) * (Random.Shared.NextDouble() < 0.5 ? -1 : 1);
-            pawn.Velocity.Z.Value += Random.Shared.NextInt64(100, 300);
-            pawn.VelocityUpdated();
+            var velocity = new Vector(
+                (float)Random.Shared.NextInt64(50, 230) * (Random.Shared.NextDouble() < 0.5 ? -1 : 1),
+                (float)Random.Shared.NextInt64(50, 230) * (Random.Shared.NextDouble() < 0.5 ? -1 : 1),
+                Random.Shared.NextInt64(100, 300)
+            );
+
+            pawn.Teleport(null, null, velocity);
         }
     }
 
@@ -541,13 +545,211 @@ public partial class ServerCommands
 
         SendMessageToPlayers(players, sender, (p, localizer) =>
         {
-            var oldName = oldNames.ContainsKey(p) ? oldNames[p] : "Unknown";
+            var oldName = oldNames.TryGetValue(p, out string? value) ? value : "Unknown";
             return (localizer[
                 "command.rename_success",
                 ConfigurationManager.GetCurrentConfiguration()!.Prefix,
                 adminName,
                 oldName,
                 newName
+            ], MessageType.Chat);
+        });
+    }
+
+    [Command("god", permission: "admins.commands.god")]
+    public void Command_God(ICommandContext context)
+    {
+        if (!context.IsSentByPlayer)
+        {
+            SendByPlayerOnly(context);
+            return;
+        }
+
+        if (!ValidateArgsCount(context, 1, "god", ["<player>"]))
+        {
+            return;
+        }
+
+        var players = FindTargetPlayers(context, context.Args[0]);
+        if (players == null)
+        {
+            return;
+        }
+
+        foreach (var player in players)
+        {
+            ToggleGodMode(player);
+        }
+
+        NotifyPlayersAction(players, context.Sender!, "command.god_success");
+    }
+
+    [Command("respawn", permission: "admins.commands.respawn")]
+    public void Command_Respawn(ICommandContext context)
+    {
+        if (!context.IsSentByPlayer)
+        {
+            SendByPlayerOnly(context);
+            return;
+        }
+
+        if (!ValidateArgsCount(context, 1, "respawn", ["<player>"]))
+        {
+            return;
+        }
+
+        var players = FindTargetPlayers(context, context.Args[0]);
+        if (players == null)
+        {
+            return;
+        }
+
+        foreach (var player in players)
+        {
+            RespawnPlayer(player);
+        }
+
+        NotifyPlayersAction(players, context.Sender!, "command.respawn_success");
+    }
+
+    [Command("swap", permission: "admins.commands.swap")]
+    public void Command_Swap(ICommandContext context)
+    {
+        if (!context.IsSentByPlayer)
+        {
+            SendByPlayerOnly(context);
+            return;
+        }
+
+        if (!ValidateArgsCount(context, 1, "swap", ["<player>"]))
+        {
+            return;
+        }
+
+        var players = FindTargetPlayers(context, context.Args[0]);
+        if (players == null)
+        {
+            return;
+        }
+
+        foreach (var player in players)
+        {
+            SwapPlayerTeam(player);
+        }
+
+        NotifyPlayersAction(players, context.Sender!, "command.swap_success");
+    }
+
+    [Command("team", permission: "admins.commands.team")]
+    public void Command_Team(ICommandContext context)
+    {
+        if (!context.IsSentByPlayer)
+        {
+            SendByPlayerOnly(context);
+            return;
+        }
+
+        if (!ValidateArgsCount(context, 2, "team", ["<player>", "<team>"]))
+        {
+            return;
+        }
+
+        var players = FindTargetPlayers(context, context.Args[0]);
+        if (players == null)
+        {
+            return;
+        }
+
+        var teamName = context.Args[1].ToLower();
+        var targetTeam = GetTeamFromName(teamName);
+
+        if (targetTeam == null)
+        {
+            var localizer = GetPlayerLocalizer(context);
+            context.Reply(localizer["command.team_invalid", ConfigurationManager.GetCurrentConfiguration()!.Prefix, teamName]);
+            return;
+        }
+
+        foreach (var player in players)
+        {
+            player.ChangeTeam(targetTeam.Value);
+        }
+
+        NotifyTeamChange(players, context.Sender!, targetTeam.Value);
+    }
+
+    private void ToggleGodMode(IPlayer player)
+    {
+        var pawn = player.PlayerPawn;
+        if (pawn == null || !pawn.IsValid || pawn.LifeState != (byte)LifeState_t.LIFE_ALIVE)
+        {
+            return;
+        }
+
+        pawn.TakesDamage = !pawn.TakesDamage;
+        pawn.TakesDamageUpdated();
+    }
+
+    private void RespawnPlayer(IPlayer player)
+    {
+        var controller = player.Controller;
+        if (controller == null || !controller.IsValid)
+        {
+            return;
+        }
+
+        controller.Respawn();
+    }
+
+    private void SwapPlayerTeam(IPlayer player)
+    {
+        var controller = player.Controller;
+        if (controller == null || !controller.IsValid)
+        {
+            return;
+        }
+
+        var currentTeam = controller.TeamNum;
+        var newTeam = currentTeam == (byte)Team.T
+            ? Team.CT
+            : Team.T;
+
+        player.SwitchTeam(newTeam);
+    }
+
+    private Team? GetTeamFromName(string teamName)
+    {
+        return teamName switch
+        {
+            "ct" or "counterterrorist" or "3" => Team.CT,
+            "t" or "terrorist" or "2" => Team.T,
+            "spec" or "spectator" or "1" => Team.Spectator,
+            "none" or "0" => Team.None,
+            _ => null
+        };
+    }
+
+    private void NotifyTeamChange(List<IPlayer> players, IPlayer sender, Team team)
+    {
+        var adminName = sender.Controller.PlayerName;
+        var teamName = team switch
+        {
+            Team.CT => "CT",
+            Team.T => "T",
+            Team.Spectator => "Spectator",
+            Team.None => "None",
+            _ => "Unknown"
+        };
+
+        SendMessageToPlayers(players, sender, (p, localizer) =>
+        {
+            var playerName = GetPlayerName(p);
+            return (localizer[
+                "command.team_success",
+                ConfigurationManager.GetCurrentConfiguration()!.Prefix,
+                adminName,
+                playerName,
+                teamName
             ], MessageType.Chat);
         });
     }

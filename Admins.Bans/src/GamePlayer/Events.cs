@@ -16,17 +16,6 @@ public partial class GamePlayer
         Core = core;
         _serverBans = serverBans;
 
-        Core.Scheduler.RepeatBySeconds(5f, () =>
-        {
-            var players = Core.PlayerManager.GetAllPlayers();
-            foreach (var player in players)
-            {
-                if (player.IsFakeClient || !player.IsValid) continue;
-
-                _serverBans.CheckPlayer(player);
-            }
-        });
-
         core.Registrator.Register(this);
     }
 
@@ -46,5 +35,10 @@ public partial class GamePlayer
         if (player == null) return;
 
         player.Kick("Steam authorization failed.", ENetworkDisconnectionReason.NETWORK_DISCONNECT_STEAM_AUTHINVALID);
+    }
+
+    public void CheckAllOnlinePlayers()
+    {
+        _serverBans.CheckAllOnlinePlayers();
     }
 }

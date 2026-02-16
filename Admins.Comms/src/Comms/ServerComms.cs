@@ -13,9 +13,8 @@ public class ServerComms
     private ISwiftlyCore Core = null!;
     private IConfigurationManager _configurationManager = null!;
     private IServerManager _serverManager = null!;
-    private long _lastSyncTimestamp = 0;
 
-    public static ConcurrentDictionary<long, ISanction> AllSanctions { get; set; } = [];
+    public static ConcurrentDictionary<ulong, List<ISanction>> OnlinePlayerSanctions { get; set; } = [];
 
     public ServerComms(ISwiftlyCore core)
     {
@@ -32,22 +31,7 @@ public class ServerComms
         _configurationManager = configurationManager;
     }
 
-    public void Load()
-    {
-        Task.Run(async () =>
-        {
-            if (_configurationManager.GetConfigurationMonitor()!.CurrentValue.UseDatabase == true)
-            {
-                var db = Core.Database.GetConnection("admins");
-                var bans = await db.GetAllAsync<Sanction>();
-                AllSanctions = new ConcurrentDictionary<long, ISanction>(bans.ToDictionary(b => b.Id, b => (ISanction)b));
-
-                _lastSyncTimestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-            }
-        });
-    }
-
-    public async Task SyncSanctionsFromDatabase()
+    public async Task LoadPlayerSanctionsAsync(ulong steamId, string playerIp)
     {
         if (_configurationManager.GetConfigurationMonitor()!.CurrentValue.UseDatabase == false)
             return;
@@ -55,44 +39,88 @@ public class ServerComms
         try
         {
             var db = Core.Database.GetConnection("admins");
+            var currentTime = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            var serverGuid = _serverManager.GetServerGUID();
+            var steamId64 = (long)steamId;
 
-            var newSanctions = await db.SelectAsync<Sanction>(s => s.UpdatedAt > _lastSyncTimestamp);
+            var steamIdSanctions = await db.SelectAsync<Sanction>(s =>
+                s.SteamId64 == steamId64 &&
+                s.SanctionType == SanctionType.SteamID
+            );
 
-            if (newSanctions.Any())
-            {
-                Core.Logger.LogInformation($"[Sanctions Sync] Found {newSanctions.Count()} new/updated sanctions from database");
+            var ipSanctions = !string.IsNullOrEmpty(playerIp)
+                ? await db.SelectAsync<Sanction>(s =>
+                    s.PlayerIp == playerIp &&
+                    s.SanctionType == SanctionType.IP
+                )
+                : [];
 
-                var currentTime = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            var activeSanctions = steamIdSanctions.Concat(ipSanctions)
+                .Where(s =>
+                    (s.ExpiresAt == 0 || s.ExpiresAt > currentTime) &&
+                    (s.Server == serverGuid || s.GlobalSanction)
+                )
+                .Cast<ISanction>()
+                .ToList();
 
-                foreach (var sanction in newSanctions)
-                {
-                    if (sanction.ExpiresAt != 0 && sanction.ExpiresAt <= currentTime)
-                    {
-                        AllSanctions.TryRemove(sanction.Id, out _);
-                    }
-                    else
-                    {
-                        AllSanctions.AddOrUpdate(sanction.Id, sanction, (key, oldValue) => (ISanction)sanction);
-                    }
-                }
-
-                var maxUpdatedAt = newSanctions.Max(s => s.UpdatedAt);
-                _lastSyncTimestamp = Math.Max(_lastSyncTimestamp, maxUpdatedAt);
-            }
+            OnlinePlayerSanctions[steamId] = activeSanctions;
         }
         catch (Exception ex)
         {
-            Core.Logger.LogError($"[Sanctions Sync] Error syncing sanctions from database: {ex.Message}");
+            Core.Logger.LogError($"[Comms] Error loading sanctions for SteamID {steamId}: {ex.Message}");
+        }
+    }
+
+    public void UnloadPlayer(ulong steamId)
+    {
+        OnlinePlayerSanctions.TryRemove(steamId, out _);
+    }
+
+    public void AddToOnlineCache(ulong steamId, ISanction sanction)
+    {
+        OnlinePlayerSanctions.AddOrUpdate(
+            steamId,
+            [sanction],
+            (_, existing) =>
+            {
+                existing.Add(sanction);
+                return existing;
+            }
+        );
+    }
+
+    public void RemoveFromOnlineCache(ulong steamId, long sanctionId)
+    {
+        if (OnlinePlayerSanctions.TryGetValue(steamId, out var sanctions))
+        {
+            sanctions.RemoveAll(s => s.Id == sanctionId);
+        }
+    }
+
+    public async Task RefreshOnlinePlayerSanctionsAsync()
+    {
+        var players = Core.PlayerManager.GetAllPlayers();
+        foreach (var player in players)
+        {
+            if (player.IsFakeClient || !player.IsValid)
+                continue;
+
+            await LoadPlayerSanctionsAsync(player.SteamID, player.IPAddress);
         }
     }
 
     public ISanction? FindActiveSanction(long steamId64, string playerIp, SanctionKind sanctionKind)
     {
         var currentTime = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-        return AllSanctions.Values.FirstOrDefault(sanction =>
-            ((sanction.SteamId64 == steamId64 && sanction.SanctionType == SanctionType.SteamID) || (!string.IsNullOrEmpty(playerIp) && sanction.PlayerIp == playerIp && sanction.SanctionType == SanctionType.IP)) &&
-            (sanction.ExpiresAt == 0 || sanction.ExpiresAt > currentTime) && (sanction.SanctionKind == sanctionKind) &&
-            (sanction.Server == _serverManager.GetServerGUID() || sanction.GlobalSanction)
-        );
+
+        if (OnlinePlayerSanctions.TryGetValue((ulong)steamId64, out var sanctions))
+        {
+            return sanctions.FirstOrDefault(s =>
+                s.SanctionKind == sanctionKind &&
+                (s.ExpiresAt == 0 || s.ExpiresAt > currentTime)
+            );
+        }
+
+        return null;
     }
 }

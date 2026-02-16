@@ -35,6 +35,20 @@ public partial class ServerCommands
         }
     }
 
+    [Command("reloadadmins", permission: "admins.command.reloadadmins")]
+    public async void ReloadAdminsCommand(ICommandContext context)
+    {
+        var localizer = GetPlayerLocalizer(context);
+
+        _groupsManager!.RefreshGroups();
+        _adminsManager!.RefreshAdmins();
+
+        await context.ReplyAsync(localizer[
+            "command.reloadadmins.success",
+            ConfigurationManager.GetCurrentConfiguration()!.Prefix
+        ]);
+    }
+
     private async void HandleGiveAdmin(ICommandContext context)
     {
         if (!await ValidateArgsCountAsync(context, 4, "admins give", ["<steamid64>", "<username>", "<immunity>", "[permissions]", "[groups]", "[server_guids]"]))

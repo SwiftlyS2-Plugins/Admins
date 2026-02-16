@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using Admins.Bans.Contract;
 using Admins.Bans.Database.Models;
 using Admins.Core.Contract;
@@ -15,9 +14,6 @@ public class ServerBans
     private ISwiftlyCore Core = null!;
     private IConfigurationManager _configurationManager = null!;
     private IServerManager _serverManager = null!;
-    private long _lastSyncTimestamp = 0;
-
-    public static ConcurrentDictionary<long, IBan> AllBans { get; set; } = [];
 
     public ServerBans(ISwiftlyCore core)
     {
@@ -34,68 +30,58 @@ public class ServerBans
         _configurationManager = configurationManager;
     }
 
-    public void Load()
-    {
-        Task.Run(async () =>
-        {
-            if (_configurationManager.GetConfigurationMonitor()!.CurrentValue.UseDatabase == true)
-            {
-                var db = Core.Database.GetConnection("admins");
-                var bans = await db.GetAllAsync<Ban>();
-                AllBans = new ConcurrentDictionary<long, IBan>(bans.ToDictionary(b => b.Id, b => (IBan)b));
-
-                _lastSyncTimestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-            }
-        });
-    }
-
-    public async Task SyncBansFromDatabase()
+    public async Task<IBan?> FindActiveBanAsync(long steamId64, string playerIp)
     {
         if (_configurationManager.GetConfigurationMonitor()!.CurrentValue.UseDatabase == false)
-            return;
+            return null;
 
         try
         {
             var db = Core.Database.GetConnection("admins");
+            var currentTime = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            var serverGuid = _serverManager.GetServerGUID();
 
-            var newBans = await db.SelectAsync<Ban>(b => b.UpdatedAt > _lastSyncTimestamp);
+            var steamIdBans = await db.SelectAsync<Ban>(b =>
+                b.SteamId64 == steamId64 &&
+                b.BanType == BanType.SteamID
+            );
 
-            if (newBans.Any())
+            var activeSteamBan = steamIdBans.FirstOrDefault(b =>
+                (b.ExpiresAt == 0 || b.ExpiresAt > currentTime) &&
+                (b.Server == serverGuid || b.GlobalBan)
+            );
+
+            if (activeSteamBan != null)
+                return activeSteamBan;
+
+            if (!string.IsNullOrEmpty(playerIp))
             {
-                Core.Logger.LogInformation($"[Bans Sync] Found {newBans.Count()} new/updated bans from database");
+                var ipBans = await db.SelectAsync<Ban>(b =>
+                    b.PlayerIp == playerIp &&
+                    b.BanType == BanType.IP
+                );
 
-                var currentTime = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+                var activeIpBan = ipBans.FirstOrDefault(b =>
+                    (b.ExpiresAt == 0 || b.ExpiresAt > currentTime) &&
+                    (b.Server == serverGuid || b.GlobalBan)
+                );
 
-                foreach (var ban in newBans)
-                {
-                    if (ban.ExpiresAt != 0 && ban.ExpiresAt <= currentTime)
-                    {
-                        AllBans.TryRemove(ban.Id, out _);
-                    }
-                    else
-                    {
-                        AllBans.AddOrUpdate(ban.Id, (IBan)ban, (key, oldValue) => (IBan)ban);
-                    }
-                }
-
-                var maxUpdatedAt = newBans.Max(b => b.UpdatedAt);
-                _lastSyncTimestamp = Math.Max(_lastSyncTimestamp, maxUpdatedAt);
+                if (activeIpBan != null)
+                    return activeIpBan;
             }
+
+            return null;
         }
         catch (Exception ex)
         {
-            Core.Logger.LogError($"[Bans Sync] Error syncing bans from database: {ex.Message}");
+            Core.Logger.LogError($"Error querying active ban for SteamID {steamId64}: {ex.Message}");
+            return null;
         }
     }
 
     public IBan? FindActiveBan(long steamId64, string playerIp)
     {
-        var currentTime = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-        return AllBans.Values.FirstOrDefault(ban =>
-            ((ban.SteamId64 == steamId64 && ban.BanType == BanType.SteamID) || (!string.IsNullOrEmpty(playerIp) && ban.PlayerIp == playerIp && ban.BanType == BanType.IP)) &&
-            (ban.ExpiresAt == 0 || ban.ExpiresAt > currentTime) &&
-            (ban.Server == _serverManager.GetServerGUID() || ban.GlobalBan)
-        );
+        return FindActiveBanAsync(steamId64, playerIp).GetAwaiter().GetResult();
     }
 
     public TimeZoneInfo GetConfiguredTimeZone()
@@ -120,23 +106,39 @@ public class ServerBans
 
     public void CheckPlayer(IPlayer player)
     {
-        var ban = FindActiveBan((long)player.SteamID, player.IPAddress);
-        if (ban != null)
+        Task.Run(async () =>
         {
-            var localizer = Core.Translation.GetPlayerLocalizer(player);
-            string kickMessage = localizer[
-                "ban.kick_message",
-                ban.Reason,
-                ban.ExpiresAt == 0 ? localizer["never"] : FormatTimestampInTimeZone((long)ban.ExpiresAt),
-                ban.AdminName,
-                ban.AdminSteamId64.ToString()
-            ];
-            player.SendMessage(MessageType.Console, kickMessage);
-
-            Core.Scheduler.NextTick(() =>
+            var ban = await FindActiveBanAsync((long)player.SteamID, player.IPAddress);
+            if (ban != null)
             {
-                player.Kick(kickMessage, ENetworkDisconnectionReason.NETWORK_DISCONNECT_REJECT_BANNED);
-            });
+                var localizer = Core.Translation.GetPlayerLocalizer(player);
+                string kickMessage = localizer[
+                    "ban.kick_message",
+                    ban.Reason,
+                    ban.ExpiresAt == 0 ? localizer["never"] : FormatTimestampInTimeZone((long)ban.ExpiresAt),
+                    ban.AdminName,
+                    ban.AdminSteamId64.ToString()
+                ];
+
+                Core.Scheduler.NextTick(() =>
+                {
+                    player.SendMessage(MessageType.Console, kickMessage);
+
+                    player.KickAsync(kickMessage, ENetworkDisconnectionReason.NETWORK_DISCONNECT_REJECT_BANNED);
+                });
+            }
+        });
+    }
+
+    public void CheckAllOnlinePlayers()
+    {
+        var players = Core.PlayerManager.GetAllPlayers();
+        foreach (var player in players)
+        {
+            if (player.IsFakeClient || !player.IsValid)
+                continue;
+
+            CheckPlayer(player);
         }
     }
 }
