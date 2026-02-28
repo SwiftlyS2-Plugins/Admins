@@ -678,6 +678,67 @@ public partial class ServerCommands
         NotifyTeamChange(players, context.Sender!, targetTeam.Value);
     }
 
+    [Command("goto", permission: "admins.commands.goto")]
+    public void Command_Goto(ICommandContext context)
+    {
+        if (!context.IsSentByPlayer)
+        {
+            SendByPlayerOnly(context);
+            return;
+        }
+
+        if (!ValidateArgsCount(context, 1, "goto", ["<player>"]))
+        {
+            return;
+        }
+
+        var players = FindTargetPlayers(context, context.Args[0]);
+        if (players == null)
+        {
+            return;
+        }
+
+        var targetPlayer = players.FirstOrDefault();
+        if (targetPlayer == null)
+        {
+            return;
+        }
+
+        var targetPawn = targetPlayer.PlayerPawn;
+        if (!IsValidAlivePawn(targetPawn))
+        {
+            var localizer = GetPlayerLocalizer(context);
+            context.Reply(localizer["command.goto_target_dead", ConfigurationManager.GetCurrentConfiguration()!.Prefix]);
+            return;
+        }
+
+        var adminPawn = context.Sender!.PlayerPawn;
+        if (!IsValidAlivePawn(adminPawn))
+        {
+            var localizer = GetPlayerLocalizer(context);
+            context.Reply(localizer["command.goto_self_dead", ConfigurationManager.GetCurrentConfiguration()!.Prefix]);
+            return;
+        }
+
+        var origin = targetPawn!.AbsOrigin;
+        var rotation = targetPawn.AbsRotation;
+
+        if (origin != null && rotation != null)
+        {
+            rotation.Value.ToDirectionVectors(out var forward, out var right, out var up);
+
+            // Teleport 100 units behind the target player
+            var safeOrigin = new Vector(
+                origin.Value.X - (forward.X * 100f),
+                origin.Value.Y - (forward.Y * 100f),
+                origin.Value.Z
+            );
+            
+            adminPawn!.Teleport(safeOrigin, rotation, new Vector(0, 0, 0));
+            NotifyPlayersAction(new List<IPlayer> { targetPlayer }, context.Sender!, "command.goto_success");
+        }
+    }
+
     private void ToggleGodMode(IPlayer player)
     {
         var pawn = player.PlayerPawn;
