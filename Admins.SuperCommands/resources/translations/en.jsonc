@@ -5,6 +5,7 @@
     "command.setmoney_success": "{0} [green]{1}[default] has set [green]${2}[default] to player '[green]{3}[default]'.",
     "command.melee_success": "{0} [green]{1}[default] has given melee weapon to player '[green]{2}[default]'.",
     "command.disarm_success": "{0} [green]{1}[default] has disarmed player '[green]{2}[default]'.",
+    "command.clean_success": "{0} [green]{1}[default] has cleaned [green]{2}[default] weapons from the ground.",
     "command.restartround": "{0} Admin [green]{1}[default] has restarted the round with a delay of [green]{2} seconds[default].",
     "command.freeze_success": "{0} [green]{1}[default] has [red]frozen[default] player '[green]{2}[default]'.",
     "command.unfreeze_success": "{0} [green]{1}[default] has [green]unfrozen[default] player '[green]{2}[default]'.",
