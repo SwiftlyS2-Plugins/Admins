@@ -7,16 +7,16 @@ public class Admins_AddTimeColumnToSanctions : Migration
 {
     public override void Up()
     {
-        if (Schema.Table("admins-sanctions").Exists())
+        if (Schema.Table("sanctions").Exists())
         {
-            if (!Schema.Table("admins-sanctions").Column("UpdatedAt").Exists())
+            if (!Schema.Table("sanctions").Column("UpdatedAt").Exists())
             {
-                Alter.Table("admins-sanctions")
+                Alter.Table("sanctions")
                     .AddColumn("UpdatedAt").AsInt64().NotNullable().WithDefaultValue(0);
             }
-            if (!Schema.Table("admins-sanctions").Column("CreatedAt").Exists())
+            if (!Schema.Table("sanctions").Column("CreatedAt").Exists())
             {
-                Alter.Table("admins-sanctions")
+                Alter.Table("sanctions")
                     .AddColumn("CreatedAt").AsInt64().NotNullable().WithDefaultValue(0);
             }
         }
@@ -24,13 +24,13 @@ public class Admins_AddTimeColumnToSanctions : Migration
 
     public override void Down()
     {
-        if (Schema.Table("admins-sanctions").Column("UpdatedAt").Exists())
+        if (Schema.Table("sanctions").Column("UpdatedAt").Exists())
         {
-            Delete.Column("UpdatedAt").FromTable("admins-sanctions");
+            Delete.Column("UpdatedAt").FromTable("sanctions");
         }
-        if (Schema.Table("admins-sanctions").Column("CreatedAt").Exists())
+        if (Schema.Table("sanctions").Column("CreatedAt").Exists())
         {
-            Delete.Column("CreatedAt").FromTable("admins-sanctions");
+            Delete.Column("CreatedAt").FromTable("sanctions");
         }
     }
 }

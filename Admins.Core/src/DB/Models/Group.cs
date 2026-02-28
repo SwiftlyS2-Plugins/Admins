@@ -6,7 +6,7 @@ using Dommel;
 
 namespace Admins.Core.Database.Models;
 
-[Table("admins-groups")]
+[Table("groups")]
 public class Group : IGroup
 {
     [Key]

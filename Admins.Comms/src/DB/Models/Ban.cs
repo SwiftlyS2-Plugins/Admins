@@ -4,7 +4,7 @@ using Admins.Comms.Contract;
 
 namespace Admins.Comms.Database.Models;
 
-[Table("admins-sanctions")]
+[Table("sanctions")]
 public class Sanction : ISanction
 {
     [Key]

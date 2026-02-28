@@ -7,9 +7,9 @@ public class Admins_AddBansTable : Migration
 {
     public override void Up()
     {
-        if (!Schema.Table("admins-bans").Exists())
+        if (!Schema.Table("bans").Exists())
         {
-            Create.Table("admins-bans")
+            Create.Table("bans")
             .WithColumn("Id").AsInt64().PrimaryKey().Identity()
             .WithColumn("SteamId64").AsInt64().NotNullable()
             .WithColumn("PlayerName").AsString().NotNullable()
@@ -27,9 +27,9 @@ public class Admins_AddBansTable : Migration
 
     public override void Down()
     {
-        if (Schema.Table("admins-bans").Exists())
+        if (Schema.Table("bans").Exists())
         {
-            Delete.Table("admins-bans");
+            Delete.Table("bans");
         }
     }
 }

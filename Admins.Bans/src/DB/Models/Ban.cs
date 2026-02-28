@@ -4,7 +4,7 @@ using Admins.Bans.Contract;
 
 namespace Admins.Bans.Database.Models;
 
-[Table("admins-bans")]
+[Table("bans")]
 public class Ban : IBan
 {
     [Key]

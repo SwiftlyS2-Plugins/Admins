@@ -7,9 +7,9 @@ public class Admins_AddServerTable : Migration
 {
     public override void Up()
     {
-        if (!Schema.Table("admins-servers").Exists())
+        if (!Schema.Table("servers").Exists())
         {
-            Create.Table("admins-servers")
+            Create.Table("servers")
             .WithColumn("Id").AsInt64().PrimaryKey().Identity()
             .WithColumn("IP").AsString(45).NotNullable()
             .WithColumn("Port").AsInt32().NotNullable()
@@ -20,9 +20,9 @@ public class Admins_AddServerTable : Migration
 
     public override void Down()
     {
-        if (Schema.Table("admins-servers").Exists())
+        if (Schema.Table("servers").Exists())
         {
-            Delete.Table("admins-servers");
+            Delete.Table("servers");
         }
     }
 }

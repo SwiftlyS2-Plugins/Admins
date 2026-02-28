@@ -6,7 +6,7 @@ using Dommel;
 
 namespace Admins.Core.Database.Models;
 
-[Table("admins-admins")]
+[Table("admins")]
 public class Admin : IAdmin
 {
     [Key]

@@ -7,9 +7,9 @@ public class Admins_AddGroupsTable : Migration
 {
     public override void Up()
     {
-        if (!Schema.Table("admins-groups").Exists())
+        if (!Schema.Table("groups").Exists())
         {
-            Create.Table("admins-groups")
+            Create.Table("groups")
             .WithColumn("Id").AsInt64().PrimaryKey().Identity()
             .WithColumn("Name").AsString(100).NotNullable()
             .WithColumn("Permissions").AsString(16384).NotNullable()
@@ -20,9 +20,9 @@ public class Admins_AddGroupsTable : Migration
 
     public override void Down()
     {
-        if (Schema.Table("admins-groups").Exists())
+        if (Schema.Table("groups").Exists())
         {
-            Delete.Table("admins-groups");
+            Delete.Table("groups");
         }
     }
 }

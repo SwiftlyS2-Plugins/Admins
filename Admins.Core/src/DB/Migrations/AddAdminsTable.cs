@@ -7,9 +7,9 @@ public class Admins_AddAdminsTable : Migration
 {
     public override void Up()
     {
-        if (!Schema.Table("admins-admins").Exists())
+        if (!Schema.Table("admins").Exists())
         {
-            Create.Table("admins-admins")
+            Create.Table("admins")
             .WithColumn("Id").AsInt64().PrimaryKey().Identity().NotNullable()
             .WithColumn("SteamId64").AsInt64().Unique().NotNullable()
             .WithColumn("Username").AsString().Unique().NotNullable()
@@ -22,9 +22,9 @@ public class Admins_AddAdminsTable : Migration
 
     public override void Down()
     {
-        if (Schema.Table("admins-admins").Exists())
+        if (Schema.Table("admins").Exists())
         {
-            Delete.Table("admins-admins");
+            Delete.Table("admins");
         }
     }
 }

@@ -4,7 +4,7 @@ using Admins.Core.Contract;
 
 namespace Admins.Core.Database.Models;
 
-[Table("admins-servers")]
+[Table("servers")]
 public class Server : IServer
 {
     [Key]
