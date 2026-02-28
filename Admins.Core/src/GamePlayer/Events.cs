@@ -13,6 +13,7 @@ public class GamePlayer : IGamePlayer
     private IBansManager? BansManager;
     private ICommsManager? CommsManager;
     private IConfigurationManager ConfigurationManager = null!;
+    private Admins.ServerAdmins? ServerAdmins;
 
     public GamePlayer(ISwiftlyCore core, IConfigurationManager configurationManager)
     {
@@ -32,11 +33,22 @@ public class GamePlayer : IGamePlayer
         CommsManager = commsManager;
     }
 
+    public void SetServerAdmins(Admins.ServerAdmins? serverAdmins)
+    {
+        ServerAdmins = serverAdmins;
+    }
+
     [EventListener<EventDelegates.OnClientSteamAuthorize>]
     public void OnClientSteamAuthorize(IOnClientSteamAuthorizeEvent e)
     {
         var player = Core.PlayerManager.GetPlayer(e.PlayerId);
         if (player == null) return;
+
+        if (ServerAdmins != null && Admins.ServerAdmins.AllAdmins.ContainsKey(player.SteamID))
+        {
+            var admin = Admins.ServerAdmins.AllAdmins[player.SteamID];
+            ServerAdmins.AssignAdmin(player, admin);
+        }
 
         NotifyAdminsAboutPlayerRecord(player);
     }

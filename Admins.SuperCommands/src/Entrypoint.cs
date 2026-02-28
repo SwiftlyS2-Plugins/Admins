@@ -6,7 +6,7 @@ using SwiftlyS2.Shared.Plugins;
 
 namespace Admins.SuperCommands;
 
-[PluginMetadata(Id = "Admins.SuperCommands", Version = "1.0.0-b2", Name = "Admins - SuperCommands", Author = "Swiftly Development Team", Description = "The admin super commands system for your server.")]
+[PluginMetadata(Id = "Admins.SuperCommands", Version = "1.0.0-b3", Name = "Admins - SuperCommands", Author = "Swiftly Development Team", Description = "The admin super commands system for your server.")]
 public partial class AdminsSuperCommands : BasePlugin
 {
     private ServiceProvider? _serviceProvider;

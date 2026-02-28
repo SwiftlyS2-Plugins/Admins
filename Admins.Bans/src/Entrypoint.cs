@@ -15,7 +15,7 @@ using SwiftlyS2.Shared.Plugins;
 
 namespace Admins.Bans;
 
-[PluginMetadata(Id = "Admins.Bans", Version = "1.0.0-b2", Name = "Admins - Bans", Author = "Swiftly Development Team", Description = "The admin system for your server.")]
+[PluginMetadata(Id = "Admins.Bans", Version = "1.0.0-b3", Name = "Admins - Bans", Author = "Swiftly Development Team", Description = "The admin system for your server.")]
 public partial class AdminsBans : BasePlugin
 {
     private ServiceProvider? _serviceProvider;
