@@ -36,8 +36,12 @@ public partial class ServerAdmins
         {
             foreach (var (adminPlayer, adminObject) in OnlineAdmins)
             {
+                if (!adminPlayer.IsValid) continue;
+
                 UnassignAdmin(adminPlayer, adminObject);
             }
+
+            OnlineAdmins.Clear();
 
             if (_config!.CurrentValue.UseDatabase == true)
             {
