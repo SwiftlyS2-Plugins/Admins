@@ -30,5 +30,7 @@
     "command.groups.list.no_server_groups": "{0} No groups have access to this server.",
     "command.groups.list.header": "{0} [green]Groups List[default] ([green]{1}[default] groups with access to this server):",
     "command.groups.list.entry": "{0} - [green]{1}[default] | Immunity: [green]{2}[default] | Permissions: [yellow]{3}[default] | Servers: [green]{4}[default]",
+    "command.reloadadmins.success": "{0} Successfully reloaded admins and groups from the database.",
+    "notification.player_record": "{0} [yellow]{1}[default] connected - Bans: [green]{2}[default], Gags: [green]{3}[default], Mutes: [green]{4}[default]",
     "none": "None"
 }

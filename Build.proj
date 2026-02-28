@@ -1,0 +1,75 @@
+<Project>
+
+  <PropertyGroup>
+    <Configuration Condition="'$(Configuration)' == ''">Release</Configuration>
+    <CentralBuildDir>$(MSBuildThisFileDirectory)build</CentralBuildDir>
+  </PropertyGroup>
+
+  <!-- Define the plugins to build -->
+  <ItemGroup>
+    <PluginProject Include="Admins.Core\Admins.Core.csproj" />
+    <PluginProject Include="Admins.Bans\Admins.Bans.csproj" />
+    <PluginProject Include="Admins.Comms\Admins.Comms.csproj" />
+    <PluginProject Include="Admins.Menu\Admins.Menu.csproj" />
+    <PluginProject Include="Admins.SuperCommands\Admins.SuperCommands.csproj" />
+  </ItemGroup>
+
+  <!-- Clean the central build directory -->
+  <Target Name="Clean">
+    <Message Text="Cleaning central build directory..." Importance="high" />
+    <RemoveDir Directories="$(CentralBuildDir)" />
+  </Target>
+
+  <!-- Build all plugins -->
+  <Target Name="Build">
+    <Message Text="Building all plugins..." Importance="high" />
+    <MSBuild Projects="Admins-SwiftlyS2.sln"
+             Targets="Build"
+             Properties="Configuration=$(Configuration)" />
+  </Target>
+
+  <!-- Publish all plugins -->
+  <Target Name="Publish" DependsOnTargets="Build">
+    <Message Text="Publishing plugins..." Importance="high" />
+    <MSBuild Projects="@(PluginProject)"
+             Targets="Publish"
+             Properties="Configuration=$(Configuration)"
+             BuildInParallel="true" />
+  </Target>
+
+  <!-- Copy published plugins to central build directory -->
+  <Target Name="Package" DependsOnTargets="Publish">
+    <Message Text="Organizing plugins into central build directory..." Importance="high" />
+
+    <ItemGroup>
+      <CoreFiles Include="Admins.Core\build\publish\Admins.Core\**\*.*" />
+      <BansFiles Include="Admins.Bans\build\publish\Admins.Bans\**\*.*" />
+      <CommsFiles Include="Admins.Comms\build\publish\Admins.Comms\**\*.*" />
+      <MenuFiles Include="Admins.Menu\build\publish\Admins.Menu\**\*.*" />
+      <SuperCommandsFiles Include="Admins.SuperCommands\build\publish\Admins.SuperCommands\**\*.*" />
+    </ItemGroup>
+
+    <!-- Create central build directory -->
+    <MakeDir Directories="$(CentralBuildDir)" />
+
+    <!-- Copy each plugin -->
+    <Copy SourceFiles="@(CoreFiles)"
+          DestinationFiles="@(CoreFiles->'$(CentralBuildDir)\Admins.Core\%(RecursiveDir)%(Filename)%(Extension)')" />
+    <Copy SourceFiles="@(BansFiles)"
+          DestinationFiles="@(BansFiles->'$(CentralBuildDir)\Admins.Bans\%(RecursiveDir)%(Filename)%(Extension)')" />
+    <Copy SourceFiles="@(CommsFiles)"
+          DestinationFiles="@(CommsFiles->'$(CentralBuildDir)\Admins.Comms\%(RecursiveDir)%(Filename)%(Extension)')" />
+    <Copy SourceFiles="@(MenuFiles)"
+          DestinationFiles="@(MenuFiles->'$(CentralBuildDir)\Admins.Menu\%(RecursiveDir)%(Filename)%(Extension)')" />
+    <Copy SourceFiles="@(SuperCommandsFiles)"
+          DestinationFiles="@(SuperCommandsFiles->'$(CentralBuildDir)\Admins.SuperCommands\%(RecursiveDir)%(Filename)%(Extension)')" />
+
+    <Message Text="Build complete. Output: $(CentralBuildDir)" Importance="high" />
+  </Target>
+
+  <!-- Default target -->
+  <Target Name="BuildAll" DependsOnTargets="Clean;Package">
+    <Message Text="All plugins built and packaged successfully." Importance="high" />
+  </Target>
+
+</Project>

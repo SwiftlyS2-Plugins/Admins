@@ -2,12 +2,14 @@ using FluentMigrator;
 
 namespace Admins.Bans.Database.Migrations;
 
-[Migration(1762760150)]
-public class AddBansTable : Migration
+[Migration(20270214103914)]
+public class Admins_AddBansTable : Migration
 {
     public override void Up()
     {
-        Create.Table("Bans")
+        if (!Schema.Table("admins-bans").Exists())
+        {
+            Create.Table("admins-bans")
             .WithColumn("Id").AsInt64().PrimaryKey().Identity()
             .WithColumn("SteamId64").AsInt64().NotNullable()
             .WithColumn("PlayerName").AsString().NotNullable()
@@ -20,10 +22,14 @@ public class AddBansTable : Migration
             .WithColumn("AdminName").AsString().NotNullable()
             .WithColumn("Server").AsString().NotNullable()
             .WithColumn("GlobalBan").AsBoolean().NotNullable();
+        }
     }
 
     public override void Down()
     {
-        Delete.Table("Bans");
+        if (Schema.Table("admins-bans").Exists())
+        {
+            Delete.Table("admins-bans");
+        }
     }
 }

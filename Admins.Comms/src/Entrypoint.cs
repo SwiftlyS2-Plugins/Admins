@@ -11,7 +11,10 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using SwiftlyS2.Shared;
+using SwiftlyS2.Shared.Misc;
+using SwiftlyS2.Shared.NetMessages;
 using SwiftlyS2.Shared.Plugins;
+using SwiftlyS2.Shared.ProtobufDefinitions;
 
 namespace Admins.Comms;
 
@@ -78,40 +81,91 @@ public partial class AdminsComms : BasePlugin
 
     public override void UseSharedInterface(IInterfaceManager interfaceManager)
     {
-        if (interfaceManager.HasSharedInterface("Admins.Configuration.V1"))
+        try
         {
-            _configurationManager = interfaceManager.GetSharedInterface<Core.Contract.IConfigurationManager>("Admins.Configuration.V1");
+            if (interfaceManager.HasSharedInterface("Admins.Configuration.V1"))
+            {
+                _configurationManager = interfaceManager.GetSharedInterface<Core.Contract.IConfigurationManager>("Admins.Configuration.V1");
 
-            _serverComms!.SetConfigurationManager(_configurationManager);
-            _commsManager!.SetConfigurationManager(_configurationManager);
-            _serverCommands!.SetConfigurationManager(_configurationManager);
-            _gamePlayer!.SetConfigurationManager(_configurationManager);
-            _adminMenu!.SetConfigurationManager(_configurationManager);
+                _serverComms!.SetConfigurationManager(_configurationManager);
+                _commsManager!.SetConfigurationManager(_configurationManager);
+                _serverCommands!.SetConfigurationManager(_configurationManager);
+                _gamePlayer!.SetConfigurationManager(_configurationManager);
+                _adminMenu!.SetConfigurationManager(_configurationManager);
+            }
+            else
+            {
+                Core.Logger.LogWarning("Admins.Core is not loaded yet. IConfigurationManager interface not available.");
+            }
+        }
+        catch (Exception ex)
+        {
+            Core.Logger.LogError(ex, "Failed to get IConfigurationManager from Admins.Core. Make sure Admins.Core is loaded before Admins.Comms.");
         }
 
-        if (interfaceManager.HasSharedInterface("Admins.Server.V1"))
+        try
         {
-            _serverManager = interfaceManager.GetSharedInterface<IServerManager>("Admins.Server.V1");
+            if (interfaceManager.HasSharedInterface("Admins.Server.V1"))
+            {
+                _serverManager = interfaceManager.GetSharedInterface<IServerManager>("Admins.Server.V1");
 
-            _serverComms!.SetServerManager(_serverManager);
-            _serverCommands!.SetServerManager(_serverManager);
-            _adminMenu!.SetServerManager(_serverManager);
+                _serverComms!.SetServerManager(_serverManager);
+                _serverCommands!.SetServerManager(_serverManager);
+                _adminMenu!.SetServerManager(_serverManager);
+            }
+            else
+            {
+                Core.Logger.LogWarning("Admins.Core is not loaded yet. IServerManager interface not available.");
+            }
+        }
+        catch (Exception ex)
+        {
+            Core.Logger.LogError(ex, "Failed to get IServerManager from Admins.Core. Make sure Admins.Core is loaded before Admins.Comms.");
         }
 
-        if (interfaceManager.HasSharedInterface("Admins.Menu.V1"))
+        try
         {
-            _adminMenuAPI = interfaceManager.GetSharedInterface<IAdminMenuAPI>("Admins.Menu.V1");
+            if (interfaceManager.HasSharedInterface("Admins.Menu.V1"))
+            {
+                _adminMenuAPI = interfaceManager.GetSharedInterface<IAdminMenuAPI>("Admins.Menu.V1");
 
-            _adminMenu!.SetAdminMenuAPI(_adminMenuAPI);
+                _adminMenu!.SetAdminMenuAPI(_adminMenuAPI);
+            }
+            else
+            {
+                Core.Logger.LogWarning("Admins.Menu is not loaded yet. IAdminMenuAPI interface not available.");
+            }
+        }
+        catch (Exception ex)
+        {
+            Core.Logger.LogError(ex, "Failed to get IAdminMenuAPI from Admins.Menu.");
         }
 
-        _serverComms!.Load();
-        _adminMenu!.LoadAdminMenu();
+        try
+        {
+            if (interfaceManager.HasSharedInterface("Admins.GamePlayer.V1"))
+            {
+                var coreGamePlayer = interfaceManager.GetSharedInterface<Core.Contract.IGamePlayer>("Admins.GamePlayer.V1");
+                coreGamePlayer.SetCommsManager(_commsManager);
+            }
+        }
+        catch (Exception ex)
+        {
+            Core.Logger.LogError(ex, "Failed to get GamePlayer from Admins.Core.");
+        }
 
-        StartSanctionsSyncTimer();
+        if (_configurationManager != null)
+        {
+            _adminMenu!.LoadAdminMenu();
+            StartOnlinePlayerSanctionCheckTimer();
+        }
+        else
+        {
+            Core.Logger.LogError("Cannot initialize Admins.Comms: Required dependencies not available. Make sure Admins.Core is loaded first.");
+        }
     }
 
-    private void StartSanctionsSyncTimer()
+    private void StartOnlinePlayerSanctionCheckTimer()
     {
         if (_configurationManager?.GetConfigurationMonitor()?.CurrentValue == null)
             return;
@@ -120,19 +174,25 @@ public partial class AdminsComms : BasePlugin
 
         if (intervalSeconds > 0 && _configurationManager.GetConfigurationMonitor()!.CurrentValue.UseDatabase)
         {
-            Core.Logger.LogInformation($"Starting sanctions database sync timer with interval of {intervalSeconds} seconds");
+            Core.Logger.LogInformation($"Starting online player sanction check timer with interval of {intervalSeconds} seconds");
 
             Core.Scheduler.RepeatBySeconds(intervalSeconds, () =>
             {
                 Task.Run(async () =>
                 {
-                    await _serverComms!.SyncSanctionsFromDatabase();
+                    await _serverComms!.RefreshOnlinePlayerSanctionsAsync();
                 });
             });
         }
         else
         {
-            Core.Logger.LogInformation("Sanctions database sync is disabled");
+            Core.Logger.LogInformation("Online player sanction check is disabled (database not configured)");
         }
+    }
+
+    [ServerNetMessageHandler]
+    public HookResult OnChatMessage(CUserMessageSayText2 msg)
+    {
+        return _gamePlayer!.HandleChatMessage(msg);
     }
 }

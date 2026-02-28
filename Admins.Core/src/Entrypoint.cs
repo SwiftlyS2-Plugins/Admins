@@ -41,6 +41,8 @@ public partial class AdminsCore : BasePlugin
             .AddSingleton<AdminsManager>()
             .AddSingleton<ServerCommands>()
             .AddSingleton<Config.ConfigurationManager>()
+            .AddSingleton<Contract.IConfigurationManager>(sp => sp.GetRequiredService<Config.ConfigurationManager>())
+            .AddSingleton<GamePlayer.GamePlayer>()
             .AddOptionsWithValidateOnStart<CoreConfiguration>()
             .BindConfiguration("Main");
 
@@ -50,14 +52,16 @@ public partial class AdminsCore : BasePlugin
         var serverGroups = _serviceProvider.GetRequiredService<ServerGroups>();
         var serverManager = _serviceProvider.GetRequiredService<ServerManager>();
         var groupsManager = _serviceProvider.GetRequiredService<GroupsManager>();
-        var adminsManager = _serviceProvider.GetRequiredService<AdminsManager>();
-        var configurationManager = _serviceProvider.GetRequiredService<Config.ConfigurationManager>();
+        var _adminsManager = _serviceProvider.GetRequiredService<AdminsManager>();
         _ = _serviceProvider.GetRequiredService<ServerCommands>();
+        var gamePlayer = _serviceProvider.GetRequiredService<GamePlayer.GamePlayer>();
+        var configurationManager = _serviceProvider.GetRequiredService<Config.ConfigurationManager>();
 
-        serverAdmins.SetAdminsManager(adminsManager);
-        adminsManager.SetServerAdmins(serverAdmins);
+        serverAdmins.SetAdminsManager(_adminsManager);
+        _adminsManager.SetServerAdmins(serverAdmins);
 
         serverGroups.Load();
+        _adminsManager.StartSyncTimer();
     }
 
     public override void Unload()
@@ -70,5 +74,6 @@ public partial class AdminsCore : BasePlugin
         interfaceManager.AddSharedInterface<IGroupsManager, GroupsManager>("Admins.Groups.V1", _serviceProvider!.GetRequiredService<GroupsManager>());
         interfaceManager.AddSharedInterface<IServerManager, ServerManager>("Admins.Server.V1", _serviceProvider!.GetRequiredService<ServerManager>());
         interfaceManager.AddSharedInterface<Contract.IConfigurationManager, Config.ConfigurationManager>("Admins.Configuration.V1", _serviceProvider!.GetRequiredService<Config.ConfigurationManager>());
+        interfaceManager.AddSharedInterface<IGamePlayer, GamePlayer.GamePlayer>("Admins.GamePlayer.V1", _serviceProvider!.GetRequiredService<GamePlayer.GamePlayer>());
     }
 }

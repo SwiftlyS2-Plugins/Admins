@@ -4,6 +4,7 @@ using Admins.Core.Contract;
 using Admins.Core.Database.Models;
 using Admins.Core.Server;
 using Dommel;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using SwiftlyS2.Shared;
 using SwiftlyS2.Shared.Players;
@@ -27,6 +28,33 @@ public class AdminsManager : IAdminsManager
     public void SetServerAdmins(ServerAdmins serverAdmins)
     {
         _serverAdmins = serverAdmins;
+    }
+
+    public void StartSyncTimer()
+    {
+        if (_confMonitor == null)
+        {
+            return;
+        }
+
+        var intervalSeconds = _confMonitor.CurrentValue.AdminsDatabaseSyncIntervalSeconds;
+
+        if (intervalSeconds > 0 && _confMonitor.CurrentValue.UseDatabase)
+        {
+            _core.Logger.LogInformation("Starting admins database sync timer with interval of {IntervalSeconds} seconds", intervalSeconds);
+
+            _core.Scheduler.RepeatBySeconds(intervalSeconds, () =>
+            {
+                Task.Run(() =>
+                {
+                    RefreshAdmins();
+                });
+            });
+        }
+        else
+        {
+            _core.Logger.LogInformation("Admins database sync timer is disabled. Set AdminsDatabaseSyncIntervalSeconds to a value greater than 0 to enable it.");
+        }
     }
 
     public IAdmin? AddAdmin(ulong steamId64, string adminName, List<IGroup> groups, List<string> permissions)

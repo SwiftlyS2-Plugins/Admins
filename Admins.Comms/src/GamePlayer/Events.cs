@@ -4,9 +4,10 @@ using Admins.Comms.Manager;
 using Admins.Core.Contract;
 using Microsoft.Extensions.Options;
 using SwiftlyS2.Shared;
-using SwiftlyS2.Shared.Commands;
+using SwiftlyS2.Shared.Events;
 using SwiftlyS2.Shared.Misc;
 using SwiftlyS2.Shared.Players;
+using SwiftlyS2.Shared.ProtobufDefinitions;
 
 namespace Admins.Comms.Players;
 
@@ -55,6 +56,34 @@ public partial class GamePlayer
         return localTime.ToString("yyyy-MM-dd HH:mm:ss");
     }
 
+    [EventListener<EventDelegates.OnClientSteamAuthorize>]
+    public void OnClientSteamAuthorize(IOnClientSteamAuthorizeEvent e)
+    {
+        var player = Core.PlayerManager.GetPlayer(e.PlayerId);
+        if (player == null)
+            return;
+
+        Task.Run(async () =>
+        {
+            await Comms.LoadPlayerSanctionsAsync(player.SteamID, player.IPAddress);
+        });
+    }
+
+    [EventListener<EventDelegates.OnClientDisconnected>]
+    public void OnClientDisconnected(IOnClientDisconnectedEvent e)
+    {
+        var player = Core.PlayerManager.GetPlayer(e.PlayerId);
+        if (player == null)
+            return;
+
+        Comms.UnloadPlayer(player.SteamID);
+
+        if (OriginalVoiceFlags.TryGetValue(player.SteamID, out var originalFlags))
+        {
+            OriginalVoiceFlags.Remove(player.SteamID);
+        }
+    }
+
     public void ScheduleCheck()
     {
         var players = Core.PlayerManager.GetAllPlayers();
@@ -72,7 +101,7 @@ public partial class GamePlayer
 
                     var expiryText = sanction!.ExpiresAt == 0
                         ? localizer["never"]
-                        : FormatTimestampInTimeZone((long)sanction!.ExpiresAt);
+                        : FormatTimestampInTimeZone(sanction!.ExpiresAt);
 
                     string muteMessage = localizer[
                         "mute.message",
@@ -143,13 +172,19 @@ public partial class GamePlayer
         }
     }
 
-    [ClientChatHookHandler]
-    public HookResult OnClientChat(int playerId, string text, bool teamonly)
+    public HookResult HandleChatMessage(CUserMessageSayText2 msg)
     {
-        var player = Core.PlayerManager.GetPlayer(playerId);
-        if (player == null || player.IsFakeClient) return HookResult.Continue;
+        if (msg.Entityindex <= 0)
+            return HookResult.Continue;
 
-        if (ShouldHandleAdminChat(text, teamonly))
+        var player = Core.PlayerManager.GetPlayer(msg.Entityindex - 1);
+        if (player == null || player.IsFakeClient)
+            return HookResult.Continue;
+
+        var text = msg.Param2;
+        var teamOnly = msg.Chat;
+
+        if (ShouldHandleAdminChat(text, teamOnly))
         {
             HandleAdminChat(player, text);
             return HookResult.Stop;
@@ -162,7 +197,7 @@ public partial class GamePlayer
 
             var expiryText = expiresAt == 0
                             ? localizer["never"]
-                            : FormatTimestampInTimeZone((long)expiresAt);
+                            : FormatTimestampInTimeZone(expiresAt);
 
             var message = localizer[
                 "gag.message",

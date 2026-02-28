@@ -3,16 +3,20 @@ namespace Admins.Bans.Contract;
 public interface IBansManager
 {
     /// <summary>
+    /// Finds all bans matching the specified criteria.
+    /// </summary>
+    /// <param name="steamId64">Optional SteamID64 to filter by.</param>
+    /// <param name="playerIp">Optional IP address to filter by.</param>
+    /// <param name="banType">Optional ban type to filter by.</param>
+    /// <param name="status">Status filter: Active for active bans, Expired for expired bans, All for all bans.</param>
+    /// <returns>A list of bans matching the criteria.</returns>
+    public List<IBan> FindBans(long? steamId64 = null, string? playerIp = null, BanType? banType = null, RecordStatus status = RecordStatus.All);
+
+    /// <summary>
     /// Sets the list of admin bans.
     /// </summary>
     /// <param name="bans">The list of admin bans to set.</param>
     public void SetBans(List<IBan> bans);
-
-    /// <summary>
-    /// Gets all admin bans.
-    /// </summary>
-    /// <returns>A list of all admin bans.</returns>
-    public List<IBan> GetBans();
 
     /// <summary>
     /// Adds an admin ban to the database.
@@ -36,14 +40,6 @@ public interface IBansManager
     /// Clears all admin bans from the database.
     /// </summary>
     public void ClearBans();
-
-    /// <summary>
-    /// Finds an active ban by SteamID64 or player IP.
-    /// </summary>
-    /// <param name="steamId64">The SteamID64 of the player.</param>
-    /// <param name="playerIp">The IP address of the player.</param>
-    /// <returns>The active admin ban if found; otherwise, null.</returns>
-    public IBan? FindActiveBan(long steamId64, string playerIp);
 
     /// <summary>
     /// Gets all admin bans from the database.

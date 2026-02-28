@@ -100,9 +100,8 @@ public partial class AdminMenu
             .Design.SetVisualGuideLineColor(_adminMenuAPI.GetMenuColor())
             .Design.SetNavigationMarkerColor(_adminMenuAPI.GetMenuColor());
 
-        var bans = _bansManager.GetBans().Where(ban =>
-            (ban.ExpiresAt == 0 || ban.ExpiresAt > currentTime) &&
-            (ban.Server == ServerManager!.GetServerGUID() || ban.GlobalBan)
+        var bans = _bansManager.FindBans(status: RecordStatus.Active).Where(ban =>
+            ban.Server == ServerManager!.GetServerGUID() || ban.GlobalBan
         );
 
         foreach (var ban in bans)

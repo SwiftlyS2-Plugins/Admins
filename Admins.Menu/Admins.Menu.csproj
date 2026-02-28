@@ -19,7 +19,7 @@
     <PackageReference Include="Microsoft.Extensions.Configuration.Json" Version="10.0.0" ExcludeAssets="runtime" PrivateAssets="all" />
     <PackageReference Include="Microsoft.Extensions.Configuration.Binder" Version="10.0.0" ExcludeAssets="runtime" PrivateAssets="all" />
     <PackageReference Include="Microsoft.Extensions.Logging" Version="10.0.0" ExcludeAssets="runtime" PrivateAssets="all" />
-    <PackageReference Include="SwiftlyS2.CS2" Version="1.0.5" ExcludeAssets="runtime" PrivateAssets="all" />
+    <PackageReference Include="SwiftlyS2.CS2" Version="*-*" ExcludeAssets="runtime" PrivateAssets="all" />
   </ItemGroup>
 
   <ItemGroup>
@@ -48,8 +48,12 @@
     <ItemGroup>
       <PublishFiles Include="$(PublishDir)**\*.*" />
     </ItemGroup>
-    
+
     <ZipDirectory SourceDirectory="$(PublishDir)../" DestinationFile="$(OutputPath)../$(AssemblyName).zip" Overwrite="true" />
+  </Target>
+
+  <Target Name="RemoveRuntimeFolders" AfterTargets="Publish">
+    <RemoveDir Directories="$(PublishDir)runtimes" />
   </Target>
 
 </Project> 
