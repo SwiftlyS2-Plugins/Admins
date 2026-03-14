@@ -678,6 +678,154 @@ public partial class ServerCommands
         NotifyTeamChange(players, context.Sender!, targetTeam.Value);
     }
 
+    [Command("goto", permission: "admins.commands.goto")]
+    public void Command_Goto(ICommandContext context)
+    {
+        if (!context.IsSentByPlayer)
+        {
+            SendByPlayerOnly(context);
+            return;
+        }
+
+        if (!ValidateArgsCount(context, 1, "goto", ["<player>"]) || string.IsNullOrWhiteSpace(context.Args[0]))
+        {
+            if (context.Args.Length > 0 && string.IsNullOrWhiteSpace(context.Args[0]))
+            {
+                var localizer = GetPlayerLocalizer(context);
+                context.Reply(localizer[
+                    "command.syntax",
+                    ConfigurationManager.GetCurrentConfiguration()!.Prefix,
+                    context.Prefix,
+                    "goto",
+                    "<player>"
+                ]);
+            }
+            return;
+        }
+
+        var players = FindTargetPlayers(context, context.Args[0]);
+        if (players == null || players.Count == 0)
+        {
+            return;
+        }
+
+        var targetPlayer = players.FirstOrDefault(p => p.Slot != context.Sender!.Slot);
+        if (targetPlayer == null)
+        {
+            var localizer = GetPlayerLocalizer(context);
+            context.Reply(localizer["command.goto_no_valid_targets", ConfigurationManager.GetCurrentConfiguration()!.Prefix]);
+            return;
+        }
+
+        var targetPawn = targetPlayer.PlayerPawn;
+        if (!IsValidAlivePawn(targetPawn))
+        {
+            var localizer = GetPlayerLocalizer(context);
+            context.Reply(localizer["command.goto_target_dead", ConfigurationManager.GetCurrentConfiguration()!.Prefix]);
+            return;
+        }
+
+        var adminPawn = context.Sender!.PlayerPawn;
+        if (!IsValidAlivePawn(adminPawn))
+        {
+            var localizer = GetPlayerLocalizer(context);
+            context.Reply(localizer["command.goto_self_dead", ConfigurationManager.GetCurrentConfiguration()!.Prefix]);
+            return;
+        }
+
+        var origin = targetPawn!.AbsOrigin;
+        var rotation = targetPawn.AbsRotation;
+
+        if (origin != null && rotation != null)
+        {
+            rotation.Value.ToDirectionVectors(out var forward, out var right, out var up);
+
+            // Teleport 100 units behind the target player
+            var safeOrigin = new Vector(
+                origin.Value.X - (forward.X * 100f),
+                origin.Value.Y - (forward.Y * 100f),
+                origin.Value.Z
+            );
+            
+            adminPawn!.Teleport(safeOrigin, rotation, new Vector(0, 0, 0));
+            NotifyPlayersAction(new List<IPlayer> { targetPlayer }, context.Sender!, "command.goto_success");
+        }
+    }
+
+    [Command("bring", permission: "admins.commands.bring")]
+    public void Command_Bring(ICommandContext context)
+    {
+        if (!context.IsSentByPlayer)
+        {
+            SendByPlayerOnly(context);
+            return;
+        }
+
+        if (!ValidateArgsCount(context, 1, "bring", ["<player>"]) || string.IsNullOrWhiteSpace(context.Args[0]))
+        {
+            if (context.Args.Length > 0 && string.IsNullOrWhiteSpace(context.Args[0]))
+            {
+                var localizer = GetPlayerLocalizer(context);
+                context.Reply(localizer[
+                    "command.syntax",
+                    ConfigurationManager.GetCurrentConfiguration()!.Prefix,
+                    context.Prefix,
+                    "bring",
+                    "<player>"
+                ]);
+            }
+            return;
+        }
+
+        var players = FindTargetPlayers(context, context.Args[0]);
+        if (players == null || players.Count == 0)
+        {
+            return;
+        }
+
+        var adminPawn = context.Sender!.PlayerPawn;
+        if (!IsValidAlivePawn(adminPawn))
+        {
+            var localizer = GetPlayerLocalizer(context);
+            context.Reply(localizer["command.bring_self_dead", ConfigurationManager.GetCurrentConfiguration()!.Prefix]);
+            return;
+        }
+
+        var validPlayers = players.Where(p => 
+            p.Slot != context.Sender.Slot && 
+            IsValidAlivePawn(p.PlayerPawn)
+        ).ToList();
+
+        if (validPlayers.Count == 0)
+        {
+            var localizer = GetPlayerLocalizer(context);
+            context.Reply(localizer["command.bring_no_valid_targets", ConfigurationManager.GetCurrentConfiguration()!.Prefix]);
+            return;
+        }
+
+        var origin = adminPawn!.AbsOrigin;
+        var rotation = adminPawn.AbsRotation;
+
+        if (origin != null && rotation != null)
+        {
+            rotation.Value.ToDirectionVectors(out var forward, out var right, out var up);
+
+            // Teleport 100 units in front of the admin
+            var safeOrigin = new Vector(
+                origin.Value.X + (forward.X * 100f),
+                origin.Value.Y + (forward.Y * 100f),
+                origin.Value.Z
+            );
+
+            foreach (var player in validPlayers)
+            {
+                player.PlayerPawn!.Teleport(safeOrigin, rotation, new Vector(0, 0, 0));
+            }
+            
+            NotifyPlayersAction(validPlayers, context.Sender!, "command.bring_success");
+        }
+    }
+
     private void ToggleGodMode(IPlayer player)
     {
         var pawn = player.PlayerPawn;
