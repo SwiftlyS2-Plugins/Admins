@@ -129,7 +129,7 @@ public partial class ServerCommands
             }
 
             existingAdmin.Username = username;
-            existingAdmin.Immunity = immunity;
+            existingAdmin.Immunity = (int)immunity;
             existingAdmin.Groups = groups;
             existingAdmin.Permissions = permissions;
 
@@ -151,7 +151,7 @@ public partial class ServerCommands
             {
                 SteamId64 = (long)steamId64,
                 Username = username,
-                Immunity = immunity,
+                Immunity = (int)immunity,
                 Groups = groups,
                 Permissions = permissions,
                 Servers = servers.Distinct().ToList()
@@ -210,7 +210,7 @@ public partial class ServerCommands
                     ]);
                     return;
                 }
-                existingAdmin.Immunity = immunity;
+                existingAdmin.Immunity = (int)immunity;
                 break;
 
             case "permissions":

@@ -30,7 +30,7 @@ public class Group : IGroup
     }
 
     [Column("Immunity")]
-    public uint Immunity { get; set; }
+    public int Immunity { get; set; }
 
     [Ignore]
     public List<string> Permissions { get; set; } = new();

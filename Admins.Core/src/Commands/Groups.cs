@@ -80,7 +80,7 @@ public partial class ServerCommands
                 }
             }
 
-            existingGroup.Immunity = immunity;
+            existingGroup.Immunity = (int)immunity;
             existingGroup.Permissions = permissions;
 
             await _groupsManager.UpdateGroupAsync(existingGroup);
@@ -99,7 +99,7 @@ public partial class ServerCommands
             var newGroup = new Group
             {
                 Name = groupName,
-                Immunity = immunity,
+                Immunity = (int)immunity,
                 Permissions = permissions,
                 Servers = servers.Distinct().ToList()
             };
@@ -154,7 +154,7 @@ public partial class ServerCommands
             return;
         }
 
-        existingGroup.Immunity = immunity;
+        existingGroup.Immunity = (int)immunity;
         existingGroup.Permissions = permissions;
 
         foreach (var server in additionalServers)

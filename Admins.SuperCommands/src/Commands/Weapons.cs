@@ -91,6 +91,39 @@ public partial class ServerCommands
         NotifyPlayersAction(players, context.Sender!, "command.disarm_success");
     }
 
+    [Command("clean", permission: "admins.commands.clean")]
+    public void Command_Clean(ICommandContext context)
+    {
+        if (!context.IsSentByPlayer)
+        {
+            SendByPlayerOnly(context);
+            return;
+        }
+
+        var entities = Core.EntitySystem.GetAllEntitiesByClass<CBaseEntity>().ToList();
+        int count = 0;
+
+        foreach (var entity in entities)
+        {
+            if (entity.DesignerName.StartsWith("weapon_") && entity.DesignerName != "weapon_c4" && !entity.OwnerEntity.IsValid)
+            {
+                entity.Despawn();
+                count++;
+            }
+        }
+
+        var adminName = context.Sender!.Controller.PlayerName;
+        SendMessageToPlayers(Core.PlayerManager.GetAllPlayers().ToList(), null, (p, localizer) =>
+        {
+            return (localizer[
+                "command.clean_success",
+                ConfigurationManager.GetCurrentConfiguration()!.Prefix,
+                adminName,
+                count.ToString()
+            ], MessageType.Chat);
+        });
+    }
+
     private void GiveItemToPlayer(IPlayer player, string itemName)
     {
         var pawn = player.PlayerPawn;
