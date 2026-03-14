@@ -17,7 +17,7 @@ public interface IAdmin
     /// <summary>
     /// The immunity level of the admin.
     /// </summary>
-    public uint Immunity { get; set; }
+    public int Immunity { get; set; }
     /// <summary>
     /// The permissions assigned to the admin.
     /// </summary>

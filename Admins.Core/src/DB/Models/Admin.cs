@@ -33,7 +33,7 @@ public class Admin : IAdmin
     }
 
     [Column("Immunity")]
-    public uint Immunity { get; set; }
+    public int Immunity { get; set; }
 
     [Column("Servers")]
     public string ServersJson

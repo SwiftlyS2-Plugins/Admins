@@ -13,7 +13,7 @@ public interface IGroup
     /// <summary>
     /// The immunity level of the group.
     /// </summary>
-    public uint Immunity { get; set; }
+    public int Immunity { get; set; }
     /// <summary>
     /// The permissions assigned to the group.
     /// </summary>
