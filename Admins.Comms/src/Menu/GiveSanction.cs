@@ -29,16 +29,36 @@ public partial class AdminMenu
                     var adminName = player.Controller.PlayerName;
 
                     var players = (List<IPlayer>)playerQuery;
+                    var applicablePlayers = new List<IPlayer>();
+
                     foreach (var p in players)
+                    {
+                        if (!_serverCommands.CanAdminApplyActionToPlayer(player, p))
+                        {
+                            var targetImmunity = _serverCommands.GetPlayerImmunityLevel(p);
+                            _serverCommands.NotifyAdminOfImmunityProtection(player, p.Controller.PlayerName, targetImmunity);
+                        }
+                        else
+                        {
+                            applicablePlayers.Add(p);
+                        }
+                    }
+
+                    if (!applicablePlayers.Any())
+                    {
+                        return;
+                    }
+
+                    foreach (var p in applicablePlayers)
                     {
                         var sanction = new Sanction
                         {
-                            SteamId64 = (long)player.SteamID,
+                            SteamId64 = (long)p.SteamID,
                             SanctionKind = sanctionKind,
                             SanctionType = sanctionType,
                             Reason = reason,
-                            PlayerName = player.Controller.PlayerName,
-                            PlayerIp = player.IPAddress,
+                            PlayerName = p.Controller.PlayerName,
+                            PlayerIp = p.IPAddress,
                             ExpiresAt = expiresAt,
                             Length = (long)durationTimeSpan.TotalMilliseconds,
                             AdminSteamId64 = (long)player.SteamID,
@@ -50,19 +70,30 @@ public partial class AdminMenu
                         _commsManager.AddSanction(sanction);
                     }
 
-                    _serverCommands.NotifySanctionApplied(players, player, sanctionKind, expiresAt, adminName, reason);
+                    _serverCommands.NotifySanctionApplied(applicablePlayers, player, sanctionKind, expiresAt, adminName, reason);
                 }
                 else
                 {
                     if (sanctionType == SanctionType.SteamID)
                     {
                         var steamId = new CSteamID(playerQuery.ToString()!);
+                        var targetSteamId64 = steamId.GetSteamID64();
+
+                        // Check immunity for offline SteamID sanctions
+                        if (!_serverCommands.CanAdminApplyActionToSteamId(player, targetSteamId64))
+                        {
+                            var targetAdmin = AdminsManager!.GetAdmin(targetSteamId64);
+                            var targetImmunity = targetAdmin?.Immunity ?? 0;
+                            _serverCommands.NotifyAdminOfImmunityProtection(player, "Unknown", targetImmunity);
+                            return;
+                        }
+
                         var expiresAt = _serverCommands.CalculateExpiresAt(durationTimeSpan);
                         var adminName = player.Controller.PlayerName;
 
                         var sanction = new Sanction
                         {
-                            SteamId64 = (long)steamId.GetSteamID64(),
+                            SteamId64 = (long)targetSteamId64,
                             SanctionType = sanctionType,
                             SanctionKind = sanctionKind,
                             Reason = reason,
@@ -94,7 +125,7 @@ public partial class AdminMenu
                             ConfigurationManager.GetCurrentConfiguration()!.Prefix,
                             adminName,
                             sanctionTypeText,
-                            steamId.GetSteamID64(),
+                            targetSteamId64,
                             expiryText,
                             reason
                         ];

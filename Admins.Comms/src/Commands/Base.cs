@@ -17,6 +17,8 @@ public partial class ServerCommands
     private IServerManager ServerManager = null!;
     private CommsManager CommsManager = null!;
     private GamePlayer gamePlayer = null!;
+    private IAdminsManager? AdminsManager = null!;
+    private IGroupsManager? GroupsManager = null!;
 
     public ServerCommands(ISwiftlyCore core, CommsManager commsManager, GamePlayer gamePlayer)
     {
@@ -35,6 +37,16 @@ public partial class ServerCommands
     public void SetServerManager(IServerManager serverManager)
     {
         ServerManager = serverManager;
+    }
+
+    public void SetAdminsManager(IAdminsManager adminsManager)
+    {
+        AdminsManager = adminsManager;
+    }
+
+    public void SetGroupsManager(IGroupsManager groupsManager)
+    {
+        GroupsManager = groupsManager;
     }
 
     /// <summary>
@@ -239,5 +251,154 @@ public partial class ServerCommands
         var timeZone = GetConfiguredTimeZone();
         var localTime = TimeZoneInfo.ConvertTime(utcTime, timeZone);
         return localTime.ToString("yyyy-MM-dd HH:mm:ss");
+    }
+
+    /// <summary>
+    /// Gets the immunity level of a player, checking both admin and group immunity.
+    /// Returns the highest immunity level between the admin's direct immunity and their groups' immunity.
+    /// </summary>
+    /// <param name="player">The player to check immunity for.</param>
+    /// <returns>The player's immunity level, or 0 if not an admin.</returns>
+    public int GetPlayerImmunityLevel(IPlayer player)
+    {
+        // Return 0 if managers are not available
+        if (AdminsManager == null || GroupsManager == null)
+        {
+            return 0;
+        }
+
+        // Check if player is an admin
+        var admin = AdminsManager.GetAdmin(player);
+        if (admin == null)
+        {
+            return 0;
+        }
+
+        int maxImmunity = admin.Immunity;
+
+        // Check group immunities
+        var groups = GroupsManager.GetAdminGroups(admin);
+        foreach (var group in groups)
+        {
+            if (group.Immunity > maxImmunity)
+            {
+                maxImmunity = group.Immunity;
+            }
+        }
+
+        return maxImmunity;
+    }
+
+    /// <summary>
+    /// Checks if the command sender has sufficient immunity to apply action to target player.
+    /// </summary>
+    /// <param name="context">The command context (sender).</param>
+    /// <param name="targetPlayer">The target player.</param>
+    /// <returns>True if the action can be applied, false if target has immunity.</returns>
+    private bool CanApplyActionToPlayer(ICommandContext context, IPlayer targetPlayer)
+    {
+        // Console always can apply actions
+        if (!context.IsSentByPlayer)
+        {
+            return true;
+        }
+
+        int senderImmunity = GetPlayerImmunityLevel(context.Sender!);
+        int targetImmunity = GetPlayerImmunityLevel(targetPlayer);
+
+        // If target has higher or equal immunity, sender cannot apply action
+        return senderImmunity > targetImmunity;
+    }
+
+    /// <summary>
+    /// Sends an immunity protection message to the command sender.
+    /// </summary>
+    /// <param name="context">The command context.</param>
+    /// <param name="targetPlayer">The target player who has immunity.</param>
+    private void NotifyImmunityProtection(ICommandContext context, IPlayer targetPlayer)
+    {
+        var localizer = GetPlayerLocalizer(context);
+        var message = localizer[
+            "command.target_has_immunity",
+            ConfigurationManager.GetCurrentConfiguration()!.Prefix,
+            targetPlayer.Controller.PlayerName,
+            GetPlayerImmunityLevel(targetPlayer)
+        ];
+        context.Reply(message);
+    }
+
+    /// <summary>
+    /// Checks if an admin player has sufficient immunity to apply action to a target player
+    /// (for use in menu system and other non-command contexts).
+    /// </summary>
+    /// <param name="adminPlayer">The admin executing the action.</param>
+    /// <param name="targetPlayer">The target player.</param>
+    /// <returns>True if the action can be applied, false if target has immunity.</returns>
+    public bool CanAdminApplyActionToPlayer(IPlayer adminPlayer, IPlayer targetPlayer)
+    {
+        int adminImmunity = GetPlayerImmunityLevel(adminPlayer);
+        int targetImmunity = GetPlayerImmunityLevel(targetPlayer);
+
+        // If target has higher or equal immunity, admin cannot apply action
+        return adminImmunity > targetImmunity;
+    }
+
+    /// <summary>
+    /// Checks if an admin has sufficient immunity to apply action to a target SteamID
+    /// (for use in menu system with offline players).
+    /// </summary>
+    /// <param name="adminPlayer">The admin executing the action.</param>
+    /// <param name="targetSteamId64">The target SteamID64.</param>
+    /// <returns>True if the action can be applied, false if target has immunity.</returns>
+    public bool CanAdminApplyActionToSteamId(IPlayer adminPlayer, ulong targetSteamId64)
+    {
+        // Return 0 if managers are not available
+        if (AdminsManager == null)
+        {
+            return true; // Allow if we can't check
+        }
+
+        // Try to get the target as an admin
+        var targetAdmin = AdminsManager.GetAdmin(targetSteamId64);
+        if (targetAdmin == null)
+        {
+            return true; // Not an admin, allow action
+        }
+
+        int adminImmunity = GetPlayerImmunityLevel(adminPlayer);
+        int targetImmunity = targetAdmin.Immunity;
+
+        // Check group immunities for target
+        if (GroupsManager != null)
+        {
+            var targetGroups = GroupsManager.GetAdminGroups(targetAdmin);
+            foreach (var group in targetGroups)
+            {
+                if (group.Immunity > targetImmunity)
+                {
+                    targetImmunity = group.Immunity;
+                }
+            }
+        }
+
+        return adminImmunity > targetImmunity;
+    }
+
+    /// <summary>
+    /// Notifies the admin player that the target has immunity protection.
+    /// </summary>
+    /// <param name="adminPlayer">The admin player to notify.</param>
+    /// <param name="targetPlayerName">The target player's name.</param>
+    /// <param name="targetImmunityLevel">The target's immunity level.</param>
+    public void NotifyAdminOfImmunityProtection(IPlayer adminPlayer, string targetPlayerName, int targetImmunityLevel)
+    {
+        var localizer = Core.Translation.GetPlayerLocalizer(adminPlayer);
+        var message = localizer[
+            "command.target_has_immunity",
+            ConfigurationManager.GetCurrentConfiguration()!.Prefix,
+            targetPlayerName,
+            targetImmunityLevel
+        ];
+        adminPlayer.SendChat(message);
     }
 }

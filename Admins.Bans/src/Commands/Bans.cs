@@ -190,10 +190,29 @@ public partial class ServerCommands
         string reason,
         bool isGlobal)
     {
+        var applicablePlayers = new List<IPlayer>();
+        
+        foreach (var player in players)
+        {
+            if (!CanApplyActionToPlayer(context, player))
+            {
+                NotifyImmunityProtection(context, player);
+            }
+            else
+            {
+                applicablePlayers.Add(player);
+            }
+        }
+
+        if (!applicablePlayers.Any())
+        {
+            return;
+        }
+
         var expiresAt = CalculateExpiresAt(duration);
         var adminName = GetAdminName(context);
 
-        foreach (var player in players)
+        foreach (var player in applicablePlayers)
         {
             var ban = new Ban
             {
@@ -213,7 +232,7 @@ public partial class ServerCommands
             BanManager.AddBan(ban);
         }
 
-        NotifyBanApplied(players, context.Sender, expiresAt, adminName, reason);
+        NotifyBanApplied(applicablePlayers, context.Sender, expiresAt, adminName, reason);
     }
 
     public void NotifyBanApplied(
@@ -303,6 +322,17 @@ public partial class ServerCommands
         string reason,
         bool isGlobal)
     {
+        if (banType == BanType.SteamID && context.IsSentByPlayer)
+        {
+            if (!CanAdminApplyActionToSteamId(context.Sender!, steamId64))
+            {
+                var localizer = GetPlayerLocalizer(context);
+                var message = localizer["command.target_has_immunity", ConfigurationManager.GetCurrentConfiguration()!.Prefix, "Unknown", 0];
+                context.Reply(message);
+                return;
+            }
+        }
+
         var expiresAt = CalculateExpiresAt(duration);
         var adminName = GetAdminName(context);
 
@@ -323,15 +353,15 @@ public partial class ServerCommands
 
         BanManager.AddBan(ban);
 
-        var localizer = GetPlayerLocalizer(context);
+        var localizer2 = GetPlayerLocalizer(context);
         var expiryText = expiresAt == 0
-            ? localizer["never"]
+            ? localizer2["never"]
             : FormatTimestampInTimeZone(expiresAt);
 
         var messageKey = banType == BanType.SteamID ? "command.bano_success" : "command.banipo_success";
         var target = banType == BanType.SteamID ? $"SteamID64 [green]{steamId64}[default]" : $"IP [green]{ipAddress}[default]";
-        var globalSuffix = isGlobal ? $"([green]{localizer["global"]}[default])" : "";
-        var message = localizer[
+        var globalSuffix = isGlobal ? $"([green]{localizer2["global"]}[default])" : "";
+        var message2 = localizer2[
             messageKey,
             ConfigurationManager.GetCurrentConfiguration()!.Prefix,
             adminName,
@@ -340,6 +370,6 @@ public partial class ServerCommands
             globalSuffix,
             reason
         ];
-        context.Reply(message);
+        context.Reply(message2);
     }
 }

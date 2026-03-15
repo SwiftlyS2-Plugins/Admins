@@ -655,10 +655,29 @@ public partial class ServerCommands
         string reason,
         bool isGlobal)
     {
+        var applicablePlayers = new List<IPlayer>();
+        
+        foreach (var player in players)
+        {
+            if (!CanApplyActionToPlayer(context, player))
+            {
+                NotifyImmunityProtection(context, player);
+            }
+            else
+            {
+                applicablePlayers.Add(player);
+            }
+        }
+
+        if (!applicablePlayers.Any())
+        {
+            return;
+        }
+
         var expiresAt = CalculateExpiresAt(duration);
         var adminName = GetAdminName(context);
 
-        foreach (var player in players)
+        foreach (var player in applicablePlayers)
         {
             var sanction = new Sanction
             {
@@ -679,7 +698,7 @@ public partial class ServerCommands
             CommsManager.AddSanction(sanction);
         }
 
-        NotifySanctionApplied(players, context.Sender, sanctionKind, expiresAt, adminName, reason);
+        NotifySanctionApplied(applicablePlayers, context.Sender, sanctionKind, expiresAt, adminName, reason);
     }
 
     public void NotifySanctionApplied(
@@ -767,6 +786,17 @@ public partial class ServerCommands
         string reason,
         bool isGlobal)
     {
+        if (context.IsSentByPlayer)
+        {
+            if (!CanAdminApplyActionToSteamId(context.Sender!, steamId64))
+            {
+                var localizer = GetPlayerLocalizer(context);
+                var message = localizer["command.target_has_immunity", ConfigurationManager.GetCurrentConfiguration()!.Prefix, "Unknown", 0];
+                context.Reply(message);
+                return;
+            }
+        }
+
         var expiresAt = CalculateExpiresAt(duration);
         var adminName = GetAdminName(context);
 
@@ -788,19 +818,19 @@ public partial class ServerCommands
 
         CommsManager.AddSanction(sanction);
 
-        var localizer = GetPlayerLocalizer(context);
+        var localizer2 = GetPlayerLocalizer(context);
         var messageKey = sanctionKind == SanctionKind.Gag ? "command.gago_success" : "command.muteo_success";
         var expiryText = expiresAt == 0
-            ? localizer["never"]
+            ? localizer2["never"]
             : FormatTimestampInTimeZone(expiresAt);
 
         var sanctionTypeKey = sanctionKind == SanctionKind.Gag
             ? (isGlobal ? "global_gag" : "gag")
             : (isGlobal ? "global_mute" : "mute");
 
-        var sanctionTypeText = localizer[sanctionTypeKey];
+        var sanctionTypeText = localizer2[sanctionTypeKey];
 
-        var message = localizer[
+        var message2 = localizer2[
             messageKey,
             ConfigurationManager.GetCurrentConfiguration()!.Prefix,
             adminName,
@@ -809,7 +839,7 @@ public partial class ServerCommands
             expiryText,
             reason
         ];
-        context.Reply(message);
+        context.Reply(message2);
     }
 
     public void ApplyOfflineIpSanction(

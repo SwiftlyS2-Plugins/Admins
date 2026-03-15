@@ -29,15 +29,35 @@ public partial class AdminMenu
                     var adminName = player.Controller.PlayerName;
 
                     var players = (List<IPlayer>)playerQuery;
+                    var applicablePlayers = new List<IPlayer>();
+
                     foreach (var p in players)
+                    {
+                        if (!_serverCommands.CanAdminApplyActionToPlayer(player, p))
+                        {
+                            var targetImmunity = _serverCommands.GetPlayerImmunityLevel(p);
+                            _serverCommands.NotifyAdminOfImmunityProtection(player, p.Controller.PlayerName, targetImmunity);
+                        }
+                        else
+                        {
+                            applicablePlayers.Add(p);
+                        }
+                    }
+
+                    if (!applicablePlayers.Any())
+                    {
+                        return;
+                    }
+
+                    foreach (var p in applicablePlayers)
                     {
                         var Ban = new Ban
                         {
-                            SteamId64 = (long)player.SteamID,
+                            SteamId64 = (long)p.SteamID,
                             BanType = banType,
                             Reason = reason,
-                            PlayerName = player.Controller.PlayerName,
-                            PlayerIp = player.IPAddress,
+                            PlayerName = p.Controller.PlayerName,
+                            PlayerIp = p.IPAddress,
                             ExpiresAt = expiresAt,
                             Length = (long)durationTimeSpan.TotalMilliseconds,
                             AdminSteamId64 = (long)player.SteamID,
@@ -49,20 +69,30 @@ public partial class AdminMenu
                         _bansManager.AddBan(Ban);
                     }
 
-                    _serverCommands.NotifyBanApplied(players, player, expiresAt, adminName, reason);
-                    _serverCommands.KickBannedPlayers(players);
+                    _serverCommands.NotifyBanApplied(applicablePlayers, player, expiresAt, adminName, reason);
+                    _serverCommands.KickBannedPlayers(applicablePlayers);
                 }
                 else
                 {
                     if (banType == BanType.SteamID)
                     {
                         var steamId = new CSteamID(playerQuery.ToString()!);
+                        var targetSteamId64 = steamId.GetSteamID64();
+
+                        if (!_serverCommands.CanAdminApplyActionToSteamId(player, targetSteamId64))
+                        {
+                            var targetAdmin = AdminsManager!.GetAdmin(targetSteamId64);
+                            var targetImmunity = targetAdmin?.Immunity ?? 0;
+                            _serverCommands.NotifyAdminOfImmunityProtection(player, "Unknown", targetImmunity);
+                            return;
+                        }
+
                         var expiresAt = _serverCommands.CalculateExpiresAt(durationTimeSpan);
                         var adminName = player.Controller.PlayerName;
 
                         var ban = new Ban
                         {
-                            SteamId64 = (long)steamId.GetSteamID64(),
+                            SteamId64 = (long)targetSteamId64,
                             BanType = banType,
                             Reason = reason,
                             PlayerName = "Unknown",
@@ -83,7 +113,7 @@ public partial class AdminMenu
                             : _serverCommands.FormatTimestampInTimeZone(expiresAt);
 
                         var messageKey = "command.bano_success";
-                        var target = $"SteamID64 [green]{steamId.GetSteamID64()}[default]";
+                        var target = $"SteamID64 [green]{targetSteamId64}[default]";
                         var globalSuffix = global ? $"([green]{localizer["global"]}[default])" : "";
                         var message = localizer[
                             messageKey,

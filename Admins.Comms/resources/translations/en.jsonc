@@ -57,5 +57,6 @@
     "command.player_not_found": "{0} No player was found with target '[green]{1}[default]'.",
     "command.invalid_time_format": "{0} The time format '[green]{1}[default]' is invalid. Use relative time (ex. 7d, 12h, 30m, 15s).",
     "command.invalid_steamid": "{0} Invalid SteamID64 format: [green]{1}[default]",
-    "command.invalid_value_range": "{0} The value '[green]{1}[default]' is invalid for argument '[green]{2}[default]' ([green]{3}-{4}[default])."
+    "command.invalid_value_range": "{0} The value '[green]{1}[default]' is invalid for argument '[green]{2}[default]' ([green]{3}-{4}[default]).",
+    "command.target_has_immunity": "{0} Target player '[green]{1}[default]' has immunity level [green]{2}[default]."
 }

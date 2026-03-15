@@ -30,6 +30,8 @@ public partial class AdminsComms : BasePlugin
     private ServerCommands? _serverCommands;
     private GamePlayer? _gamePlayer;
     private AdminMenu? _adminMenu;
+    private IAdminsManager? _adminsManager;
+    private IGroupsManager? _groupsManager;
 
     public AdminsComms(ISwiftlyCore core) : base(core)
     {
@@ -105,6 +107,41 @@ public partial class AdminsComms : BasePlugin
 
         try
         {
+            if (interfaceManager.HasSharedInterface("Admins.Admins.V1"))
+            {
+                _adminsManager = interfaceManager.GetSharedInterface<IAdminsManager>("Admins.Admins.V1");
+                _serverCommands!.SetAdminsManager(_adminsManager);
+                _adminMenu!.SetAdminsManager(_adminsManager);
+            }
+            else
+            {
+                Core.Logger.LogWarning("Admins.Core is not loaded yet. IAdminsManager interface not available.");
+            }
+        }
+        catch (Exception ex)
+        {
+            Core.Logger.LogError(ex, "Failed to get IAdminsManager from Admins.Core. Make sure Admins.Core is loaded before Admins.Comms.");
+        }
+
+        try
+        {
+            if (interfaceManager.HasSharedInterface("Admins.Groups.V1"))
+            {
+                _groupsManager = interfaceManager.GetSharedInterface<IGroupsManager>("Admins.Groups.V1");
+                _serverCommands!.SetGroupsManager(_groupsManager);
+            }
+            else
+            {
+                Core.Logger.LogWarning("Admins.Core is not loaded yet. IGroupsManager interface not available.");
+            }
+        }
+        catch (Exception ex)
+        {
+            Core.Logger.LogError(ex, "Failed to get IGroupsManager from Admins.Core. Make sure Admins.Core is loaded before Admins.Comms.");
+        }
+
+        try
+        {
             if (interfaceManager.HasSharedInterface("Admins.Server.V1"))
             {
                 _serverManager = interfaceManager.GetSharedInterface<IServerManager>("Admins.Server.V1");
@@ -145,7 +182,7 @@ public partial class AdminsComms : BasePlugin
         {
             if (interfaceManager.HasSharedInterface("Admins.GamePlayer.V1"))
             {
-                var coreGamePlayer = interfaceManager.GetSharedInterface<Core.Contract.IGamePlayer>("Admins.GamePlayer.V1");
+                var coreGamePlayer = interfaceManager.GetSharedInterface<IGamePlayer>("Admins.GamePlayer.V1");
                 coreGamePlayer.SetCommsManager(_commsManager);
             }
         }

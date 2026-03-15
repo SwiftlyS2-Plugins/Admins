@@ -19,6 +19,7 @@ public partial class AdminMenu
     private BansManager _bansManager = null!;
     private IServerManager? ServerManager;
     private IConfigurationManager ConfigurationManager = null!;
+    private IAdminsManager? AdminsManager;
 
     public AdminMenu(ISwiftlyCore core, IOptionsMonitor<BansConfiguration> bansConfiguration, ServerCommands serverCommands, BansManager bansManager)
     {
@@ -42,6 +43,11 @@ public partial class AdminMenu
     public void SetConfigurationManager(IConfigurationManager configurationManager)
     {
         ConfigurationManager = configurationManager;
+    }
+
+    public void SetAdminsManager(IAdminsManager adminsManager)
+    {
+        AdminsManager = adminsManager;
     }
 
     public string TranslateString(IPlayer player, string key)
