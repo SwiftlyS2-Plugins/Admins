@@ -17,7 +17,7 @@
     "command.muteipo_success": "{0} [green]{1}[default] aplicou {2} ao IP [green]{3}[default] até [green]{4}[default]. Motivo: {5}",
     "admins.player_chat_format": "[green](Para Admins) {0}[default]: {1}",
     "admins.admin_chat_format": "[green](Chat Admin) {0}[default]: {1}",
-    "menu.comms.title": "Gerenciamento de Comunicação",
+    "menu.comms.title": "Comms",
     "menu.comms.sanctions.give": "Aplicar Punição",
     "menu.comms.sanctions.remove": "Remover Punição",
     "menu.comms.sanctions.view": "Ver Punições",

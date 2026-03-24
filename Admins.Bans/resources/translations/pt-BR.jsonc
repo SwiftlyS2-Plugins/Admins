@@ -7,7 +7,7 @@
     "command.unbanip_none": "{0} Nenhum banimento ativo encontrado para o IP [green]{1}[default].",
     "command.bano_success": "{0} [green]{1}[default] baniu {2} até [green]{3}[default] {4}. Motivo: {5}",
     "command.banipo_success": "{0} [green]{1}[default] baniu {2} até [green]{3}[default] {4}. Motivo: {5}",
-    "menu.bans.title": "Gerenciamento de Banimentos",
+    "menu.bans.title": "Bans",
     "menu.bans.bans.give": "Aplicar Banimento",
     "menu.bans.bans.remove": "Remover Banimento",
     "menu.bans.bans.view": "Ver Banimentos",
