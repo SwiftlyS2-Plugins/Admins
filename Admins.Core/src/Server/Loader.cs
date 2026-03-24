@@ -91,20 +91,26 @@ public partial class ServerLoader
                 }
 
                 using var db = Core.Database.GetConnection("admins");
-                var existingServer = await db.CountAsync<Database.Models.Server>(s => s.GUID == ServerGUID);
+                var port = (ushort)hostport.Value;
+                var existingByGuid = await db.CountAsync<Database.Models.Server>(s => s.GUID == ServerGUID);
+                var existingByIp = await db.CountAsync<Database.Models.Server>(s => s.IP == serverIp && s.Port == port);
 
-                if (existingServer == 0)
+                if (existingByGuid == 0 && existingByIp == 0)
                 {
                     var server = new Database.Models.Server
                     {
                         GUID = ServerGUID,
                         IP = serverIp,
-                        Port = (ushort)hostport.Value,
+                        Port = port,
                         Hostname = Core.ConVar.Find<string>("hostname")?.Value ?? "Unknown Hostname",
                     };
 
                     await db.InsertAsync(server);
                     Core.Logger.LogInformation("Registered server '{ServerName}' ({IP}:{Port}) in Admins DB.", server.Hostname, server.IP, server.Port);
+                }
+                else if (existingByIp > 0)
+                {
+                    Core.Logger.LogWarning("Server with IP {IP}:{Port} is already registered. Skipping registration.", serverIp, port);
                 }
             }
             catch (Exception e)
