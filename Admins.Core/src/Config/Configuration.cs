@@ -10,4 +10,5 @@ public class CoreConfiguration : ICoreConfiguration
     public float AdminsDatabaseSyncIntervalSeconds { get; set; } = 60f;
     public float BansDatabaseSyncIntervalSeconds { get; set; } = 30f;
     public float SanctionsDatabaseSyncIntervalSeconds { get; set; } = 30f;
+    public ImmunityMode ImmunityMode { get; set; } = ImmunityMode.ProtectFromLowerAccess;
 }

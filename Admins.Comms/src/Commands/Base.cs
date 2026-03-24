@@ -306,8 +306,19 @@ public partial class ServerCommands
         int senderImmunity = GetPlayerImmunityLevel(context.Sender!);
         int targetImmunity = GetPlayerImmunityLevel(targetPlayer);
 
-        // If target has higher or equal immunity, sender cannot apply action
-        return senderImmunity > targetImmunity;
+        var config = ConfigurationManager.GetCurrentConfiguration();
+        var immunityMode = config!.ImmunityMode;
+
+        return immunityMode switch
+        {
+            ImmunityMode.IgnoreImmunity => true,
+            ImmunityMode.ProtectFromLowerAccess => senderImmunity >= targetImmunity,
+            ImmunityMode.ProtectFromEqualOrLowerAccess => senderImmunity > targetImmunity,
+            ImmunityMode.ProtectWithNoImmunityBypass =>
+                (senderImmunity == 0 || targetImmunity == 0) || senderImmunity > targetImmunity,
+
+            _ => false,
+        };
     }
 
     /// <summary>

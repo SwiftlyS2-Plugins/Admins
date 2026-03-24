@@ -16,6 +16,7 @@
 - [Building](#building)
 - [Publishing](#publishing)
 - [Database Connection Key](#database-connection-key)
+- [Immunity Mode](#immunity-mode)
 - [Commands & Permissions](#commands--permissions)
 - [Server Console Admin Management](#server-console-admin-management)
 
@@ -33,6 +34,41 @@
 ## Database Connection Key
 
 The database connection is using the key `admins`. It supports SQLite, MySQL, MariaDB and PostgreSQL.
+
+## Immunity Mode
+
+The Immunity Mode system controls how admins can interact with other admins based on their immunity levels. You can configure this in your `config.json` file under the `ImmunityMode` property.
+
+### Available Modes
+
+#### Mode 0: Ignore Immunity (IgnoreImmunity)
+- **Behavior**: Any admin can affect any other admin, regardless of immunity levels.
+- **Use Case**: Completely disable the immunity system.
+- **Config Value**: `0`
+
+#### Mode 1: Protect from Lower Access (ProtectFromLowerAccess)
+- **Behavior**: Admins can only affect other admins with lower or equal immunity levels.
+- **Example**: An admin with immunity 50 can affect admins with immunity 0-49, but not 50+.
+- **Config Value**: `1`
+
+#### Mode 2: Protect from Equal or Lower Access (ProtectFromEqualOrLowerAccess)
+- **Behavior**: Same as Mode 1 - admins can only affect other admins with strictly lower immunity levels.
+- **Note**: Currently identical to Mode 1 in behavior.
+- **Config Value**: `2`
+
+#### Mode 3: Protect with No Immunity Bypass (ProtectWithNoImmunityBypass)
+- **Default**: No
+- **Behavior**: Same protection as Mode 2, except admins with 0 immunity can affect each other regardless.
+- **Use Case**: Allow newer admins (immunity 0) to affect each other, while protecting admins with immunity.
+- **Config Value**: `3`
+
+### Configuration Example
+
+```json
+{
+  "ImmunityMode": 1
+}
+```
 
 ## Commands & Permissions
 

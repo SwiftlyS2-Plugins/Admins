@@ -26,4 +26,9 @@ public interface ICoreConfiguration
     /// The interval in seconds to sync sanctions from the database. Set to 0 to disable automatic sync.
     /// </summary>
     public float SanctionsDatabaseSyncIntervalSeconds { get; set; }
+
+    /// <summary>
+    /// Defines how immunity checks are performed between admins.
+    /// </summary>
+    public ImmunityMode ImmunityMode { get; set; }
 }

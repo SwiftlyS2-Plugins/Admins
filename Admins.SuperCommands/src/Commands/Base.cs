@@ -332,7 +332,19 @@ public partial class ServerCommands
         var adminImmunity = GetPlayerImmunityLevel(adminPlayer);
         var targetImmunity = GetPlayerImmunityLevel(targetPlayer);
 
-        return adminImmunity > targetImmunity;
+        var config = ConfigurationManager.GetCurrentConfiguration();
+        var immunityMode = config!.ImmunityMode;
+
+        return immunityMode switch
+        {
+            ImmunityMode.IgnoreImmunity => true,
+            ImmunityMode.ProtectFromLowerAccess => adminImmunity >= targetImmunity,
+            ImmunityMode.ProtectFromEqualOrLowerAccess => adminImmunity > targetImmunity,
+            ImmunityMode.ProtectWithNoImmunityBypass =>
+                (adminImmunity == 0 || targetImmunity == 0) || adminImmunity > targetImmunity,
+
+            _ => false,
+        };
     }
 
     /// <summary>
