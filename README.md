@@ -127,38 +127,72 @@ The Immunity Mode system controls how admins can interact with other admins base
 | `!globalmuteipo <ip_address> <duration> [reason]` | `admins.commands.globalmute` | Mute offline player's IP globally |
 | `!globalsilenceipo <ip_address> <duration> [reason]` | `admins.commands.globalsilence` | Silence offline player's IP globally |
 
-### Player Management Commands (Admins.SuperCommands)
+### Player Modification Commands (Admins.SuperCommands)
 
-| Command | Permission | Description |
-|---------|-----------|-------------|
-| `!hp <player> <amount>` | `admins.commands.hp` | Set player health |
-| `!freeze <player>` | `admins.commands.freeze` | Freeze a player |
-| `!unfreeze <player>` | `admins.commands.unfreeze` | Unfreeze a player |
-| `!noclip <player>` | `admins.commands.noclip` | Toggle noclip for a player |
-| `!setspeed <player> <speed>` | `admins.commands.setspeed` | Set player movement speed |
-| `!setgravity <player> <gravity>` | `admins.commands.setgravity` | Set player gravity |
-| `!slay <player>` | `admins.commands.slay` | Kill a player |
-| `!slap <player> [damage]` | `admins.commands.slap` | Slap a player (optional damage) |
-| `!rename <player> <new_name>` | `admins.commands.rename` | Rename a player |
-| `!givemoney <player> <amount>` | `admins.commands.givemoney` | Give money to a player |
-| `!setmoney <player> <amount>` | `admins.commands.setmoney` | Set player's money |
+#### Health & Armor
+
+| Command | Permission | Arguments | Description |
+|---------|-----------|-----------|-------------|
+| `!hp` | `admins.commands.hp` | `<player> <health> [armour] [helmet]` | Set player health (0-100), armor (0-100), and optionally helmet. Helmet = assaultsuit. |
+
+#### Movement & Physics
+
+| Command | Permission | Arguments | Description |
+|---------|-----------|-----------|-------------|
+| `!freeze` | `admins.commands.freeze` | `<player>` | Prevent a player from moving or looking around |
+| `!unfreeze` | `admins.commands.unfreeze` | `<player>` | Remove freeze restriction from a player |
+| `!noclip` | `admins.commands.noclip` | None | Toggle noclip mode for yourself (pass through walls) |
+| `!setspeed` | `admins.commands.setspeed` | `<speed_multiplier>` | Set your movement speed multiplier (0.1-10.0x) |
+| `!setgravity` | `admins.commands.setgravity` | `<gravity_multiplier>` | Set your gravity multiplier (0.1-10.0x) |
+
+#### Damage & Effects
+
+| Command | Permission | Arguments | Description |
+|---------|-----------|-----------|-------------|
+| `!slay` | `admins.commands.slay` | `<player>` | Kill a player instantly |
+| `!slap` | `admins.commands.slap` | `<player> [damage]` | Slap and damage a player (0-100 damage, with knockback) |
+| `!god` | `admins.commands.god` | `<player>` | Toggle god mode (invulnerability) for a player |
+
+#### Identity & Economy
+
+| Command | Permission | Arguments | Description |
+|---------|-----------|-----------|-------------|
+| `!rename` | `admins.commands.rename` | `<player> <new_name>` | Rename a player to a new name |
+| `!givemoney` | `admins.commands.givemoney` | `<player> <amount>` | Add money to a player (1-16000) |
+| `!setmoney` | `admins.commands.setmoney` | `<player> <amount>` | Set player's money to exact amount (0-16000) |
+
+#### Respawn & Team
+
+| Command | Permission | Arguments | Description |
+|---------|-----------|-----------|-------------|
+| `!respawn` | `admins.commands.respawn` | `<player>` | Respawn a dead player (if in freeze time) |
+| `!swap` | `admins.commands.swap` | `<player>` | Swap player to the opposite team |
+| `!team` | `admins.commands.team` | `<player> <team>` | Move player to specific team (ct, t, spec, none) |
+
+#### Teleportation
+
+| Command | Permission | Arguments | Description |
+|---------|-----------|-----------|-------------|
+| `!goto` | `admins.commands.goto` | `<player>` | Teleport yourself to a player (appears behind them) |
+| `!bring` | `admins.commands.bring` | `<player>` | Teleport a player to yourself |
 
 ### Weapon Commands (Admins.SuperCommands)
 
-| Command | Permission | Description |
-|---------|-----------|-------------|
-| `!giveitem <player> <item_name>` | `admins.commands.giveitem` | Give an item/weapon to a player |
-| `!melee <player>` | `admins.commands.melee` | Strip weapons and give knife only |
-| `!disarm <player>` | `admins.commands.disarm` | Remove all weapons from a player |
+| Command | Permission | Arguments | Description |
+|---------|-----------|-----------|-------------|
+| `!giveitem` | `admins.commands.giveitem` | `<player> <item_name>` | Give a weapon/item to a player by item definition name |
+| `!melee` | `admins.commands.melee` | `<player>` | Strip all weapons and give knife only |
+| `!disarm` | `admins.commands.disarm` | `<player>` | Remove all weapons and items from a player |
+| `!clean` | `admins.commands.clean` | None | Remove all dropped weapons from the map |
 
-### Server Commands (Admins.SuperCommands)
+### Server Control Commands (Admins.SuperCommands)
 
-| Command | Permission | Description |
-|---------|-----------|-------------|
-| `!restartround [delay]` | `admins.commands.restartround` | Restart the current round |
-| `!csay <message>` | `admins.commands.csay` | Send center message to all players |
-| `!rcon <command>` | `admins.commands.rcon` | Execute server console command |
-| `!map <map_name>` | `admins.commands.map` | Change map (workshop or official) |
+| Command | Permission | Arguments | Description |
+|---------|-----------|-----------|-------------|
+| `!restartround` | `admins.commands.restartround` | `<delay>` | Restart current round with optional delay (0-300 seconds) |
+| `!csay` | `admins.commands.csay` | `<message>` | Send a centered message displayed to all players |
+| `!rcon` | `admins.commands.rcon` | `<command>` | Execute an RCON command on the server |
+
 
 ## Server Console Admin Management
 

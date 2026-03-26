@@ -69,25 +69,4 @@ public partial class ServerCommands
         var rconCommand = string.Join(" ", context.Args);
         Core.Engine.ExecuteCommand(rconCommand);
     }
-
-    [Command("map", permission: "admins.commands.map")]
-    [CommandAlias("changelevel")]
-    [CommandAlias("changemap")]
-    public void Command_Map(ICommandContext context)
-    {
-        if (!ValidateArgsCount(context, 1, "map", ["<map_name>"]))
-        {
-            return;
-        }
-
-        var mapName = context.Args[0];
-        if (!int.TryParse(mapName, out var _))
-        {
-            Core.Engine.ExecuteCommand($"changelevel {mapName}");
-        }
-        else
-        {
-            Core.Engine.ExecuteCommand($"host_workshop_map {mapName}");
-        }
-    }
 }
