@@ -12,7 +12,7 @@ using SwiftlyS2.Shared.Plugins;
 
 namespace Admins.Core;
 
-[PluginMetadata(Id = "Admins.Core", Version = "1.0.0-b5", Name = "Admins - Core", Author = "Swiftly Development Team", Description = "The admin system for your server.")]
+[PluginMetadata(Id = "Admins.Core", Version = "1.0.0-b6", Name = "Admins - Core", Author = "Swiftly Development Team", Description = "The admin system for your server.")]
 public partial class AdminsCore : BasePlugin
 {
     private ServiceProvider? _serviceProvider;

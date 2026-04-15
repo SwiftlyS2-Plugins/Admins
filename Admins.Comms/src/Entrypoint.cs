@@ -18,7 +18,7 @@ using SwiftlyS2.Shared.ProtobufDefinitions;
 
 namespace Admins.Comms;
 
-[PluginMetadata(Id = "Admins.Comms", Version = "1.0.0-b5", Name = "Admins - Comms", Author = "Swiftly Development Team", Description = "The admin system for your server.")]
+[PluginMetadata(Id = "Admins.Comms", Version = "1.0.0-b6", Name = "Admins - Comms", Author = "Swiftly Development Team", Description = "The admin system for your server.")]
 public partial class AdminsComms : BasePlugin
 {
     private ServiceProvider? _serviceProvider;

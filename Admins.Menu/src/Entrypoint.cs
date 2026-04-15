@@ -9,7 +9,7 @@ using SwiftlyS2.Shared.Plugins;
 
 namespace Admins.Menu;
 
-[PluginMetadata(Id = "Admins.Menu", Version = "1.0.0-b5", Name = "Admins - Menu", Author = "Swiftly Development Team", Description = "The admin menu system for your server.")]
+[PluginMetadata(Id = "Admins.Menu", Version = "1.0.0-b6", Name = "Admins - Menu", Author = "Swiftly Development Team", Description = "The admin menu system for your server.")]
 public partial class AdminsMenu : BasePlugin
 {
     private ServiceProvider? _serviceProvider;
