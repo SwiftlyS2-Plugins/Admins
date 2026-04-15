@@ -134,6 +134,7 @@ The Immunity Mode system controls how admins can interact with other admins base
 | Command | Permission | Arguments | Description |
 |---------|-----------|-----------|-------------|
 | `!hp` | `admins.commands.hp` | `<player> <health> [armour] [helmet]` | Set player health (0-100), armor (0-100), and optionally helmet. Helmet = assaultsuit. |
+| `!health` | `admins.commands.hp` | `<player> <health> [armour] [helmet]` | Set player health (0-100), armor (0-100), and optionally helmet. Helmet = assaultsuit. |
 
 #### Movement & Physics
 
@@ -142,8 +143,11 @@ The Immunity Mode system controls how admins can interact with other admins base
 | `!freeze` | `admins.commands.freeze` | `<player>` | Prevent a player from moving or looking around |
 | `!unfreeze` | `admins.commands.unfreeze` | `<player>` | Remove freeze restriction from a player |
 | `!noclip` | `admins.commands.noclip` | None | Toggle noclip mode for yourself (pass through walls) |
+| `!noclip` | `admins.commands.noclip` | `<player>` | Toggle noclip mode for a player (pass through walls) |
 | `!setspeed` | `admins.commands.setspeed` | `<speed_multiplier>` | Set your movement speed multiplier (0.1-10.0x) |
+| `!speed` | `admins.commands.setspeed` | `<speed_multiplier>` | Set your movement speed multiplier (0.1-10.0x) |
 | `!setgravity` | `admins.commands.setgravity` | `<gravity_multiplier>` | Set your gravity multiplier (0.1-10.0x) |
+| `!gravity` | `admins.commands.setgravity` | `<gravity_multiplier>` | Set your gravity multiplier (0.1-10.0x) |
 
 #### Damage & Effects
 
@@ -152,6 +156,7 @@ The Immunity Mode system controls how admins can interact with other admins base
 | `!slay` | `admins.commands.slay` | `<player>` | Kill a player instantly |
 | `!slap` | `admins.commands.slap` | `<player> [damage]` | Slap and damage a player (0-100 damage, with knockback) |
 | `!god` | `admins.commands.god` | `<player>` | Toggle god mode (invulnerability) for a player |
+| `!beacon` | `admins.commands.beacon` | `<player>` | Toggle beacon effect on a player (glowing outline visible through walls) |
 
 #### Identity & Economy
 
@@ -159,6 +164,7 @@ The Immunity Mode system controls how admins can interact with other admins base
 |---------|-----------|-----------|-------------|
 | `!rename` | `admins.commands.rename` | `<player> <new_name>` | Rename a player to a new name |
 | `!givemoney` | `admins.commands.givemoney` | `<player> <amount>` | Add money to a player (1-16000) |
+| `!money` | `admins.commands.givemoney` | `<player> <amount>` | Add money to a player (1-16000) |
 | `!setmoney` | `admins.commands.setmoney` | `<player> <amount>` | Set player's money to exact amount (0-16000) |
 
 #### Respawn & Team
@@ -189,10 +195,20 @@ The Immunity Mode system controls how admins can interact with other admins base
 
 | Command | Permission | Arguments | Description |
 |---------|-----------|-----------|-------------|
+| `!rr` | `admins.commands.restartround` | `<delay>` | Restart current round with default delay |
 | `!restartround` | `admins.commands.restartround` | `<delay>` | Restart current round with optional delay (0-300 seconds) |
+| `!say` | `admins.commands.say` | `<message>` | Send a chat message displayed to all players |
 | `!csay` | `admins.commands.csay` | `<message>` | Send a centered message displayed to all players |
 | `!rcon` | `admins.commands.rcon` | `<command>` | Execute an RCON command on the server |
+| `!map` | `admins.commands.map` | `<map_name>` | Change the current map |
+| `!changemap` | `admins.commands.changemap` | `<map_name>` | Change the current map (alias for !map) |
 
+### Vote Commands (Admins.SuperCommands)
+| Command | Permission | Arguments | Description |
+|---------|-----------|-----------|-------------|
+| `!vote kick` | `admins.commands.votekick` | `<player>` | Start a vote to kick a player |
+| `!vote map` | `admins.commands.votemap` | `<map1> <map2> [map3] [map4] [...]` | Start a vote to change the map with 2-4 options |
+| `!vote` | `admins.commands.vote` | `<question> <option1> <option2> [option3] [option4] [...]` | Start a custom vote with a question and 2-4 options |
 
 ## Server Console Admin Management
 
