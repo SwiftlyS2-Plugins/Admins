@@ -82,10 +82,7 @@ public partial class ServerCommands
     /// <param name="players">Target players to receive the message.</param>
     /// <param name="sender">The command sender (excluded from player list).</param>
     /// <param name="messageBuilder">Function to build the message for each player.</param>
-    private void SendMessageToPlayers(
-        IEnumerable<IPlayer> players,
-        IPlayer? sender,
-        Func<IPlayer, ILocalizer, (string message, MessageType type)> messageBuilder)
+    private void SendMessageToPlayers(IEnumerable<IPlayer> players, Func<IPlayer, ILocalizer, (string message, MessageType type)> messageBuilder)
     {
         foreach (var player in players)
         {
@@ -93,11 +90,6 @@ public partial class ServerCommands
             var (message, type) = messageBuilder(player, localizer);
 
             player.SendMessage(type, message);
-
-            if (sender != null && sender.PlayerID != player.PlayerID)
-            {
-                sender.SendMessage(type, message);
-            }
         }
     }
 

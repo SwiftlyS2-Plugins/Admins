@@ -35,6 +35,12 @@ public partial class AdminsSuperCommands : BasePlugin
 
     public override void Unload()
     {
+        _serverCommands?._beaconPlayers.Clear();
+        foreach (var token in _serverCommands?._beaconEffectTimerToken.Values ?? Enumerable.Empty<CancellationTokenSource>())
+        {
+            token.Cancel();
+        }
+        _serverCommands?._beaconEffectTimerToken.Clear();
     }
 
     public override void UseSharedInterface(IInterfaceManager interfaceManager)

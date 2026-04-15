@@ -16,14 +16,14 @@ public partial class ServerCommands
             return;
         }
 
-        if (!ValidateArgsCount(context, 1, "restartround", ["<delay>"]))
+        float delay = 1; // Default delay of 1 second before round restarts
+        if (context.Args.Length > 0)
         {
-            return;
-        }
-
-        if (!TryParseFloat(context, context.Args[0], "delay", 0, 300, out var delay))
-        {
-            return;
+            if (!TryParseFloat(context, context.Args[0], "delay", 0, 300, out delay))
+            {
+                SendSyntax(context, "restartround", ["<delay>"]);
+                return;
+            }
         }
 
         var gameRules = Core.EntitySystem.GetGameRules();
@@ -33,9 +33,31 @@ public partial class ServerCommands
         }
 
         var adminName = context.Sender!.Controller.PlayerName;
-        SendMessageToPlayers(Core.PlayerManager.GetAllPlayers(), context.Sender!, (p, localizer) =>
+        SendMessageToPlayers(Core.PlayerManager.GetAllValidPlayers(), (p, localizer) =>
         {
             return (localizer["command.restartround", ConfigurationManager.GetCurrentConfiguration()!.Prefix, adminName, delay], MessageType.Chat);
+        });
+    }
+
+    [Command("say", permission: "admins.commands.say")]
+    public void Command_Say(ICommandContext context)
+    {
+        if (!context.IsSentByPlayer)
+        {
+            SendByPlayerOnly(context);
+            return;
+        }
+
+        if (!ValidateArgsCount(context, 1, "say", ["<message>"]))
+        {
+            return;
+        }
+
+        var message = string.Join(" ", context.Args);
+        var adminName = context.Sender!.Controller.PlayerName;
+        SendMessageToPlayers(Core.PlayerManager.GetAllValidPlayers(), (p, localizer) =>
+        {
+            return (localizer["command.say", ConfigurationManager.GetCurrentConfiguration()!.Prefix, adminName, message], MessageType.Chat);
         });
     }
 
@@ -68,5 +90,50 @@ public partial class ServerCommands
 
         var rconCommand = string.Join(" ", context.Args);
         Core.Engine.ExecuteCommand(rconCommand);
+    }
+
+    [Command("map", permission: "admins.commands.map")]
+    [CommandAlias("changemap")]
+    public void Command_Map(ICommandContext context)
+    {
+        if (!context.IsSentByPlayer)
+        {
+            SendByPlayerOnly(context);
+            return;
+        }
+
+        if (!ValidateArgsCount(context, 1, "map", ["<map_name>"]))
+        {
+            return;
+        }
+
+        var mapName = context.Args[0];
+        var adminName = context.Sender!.Controller.PlayerName;
+
+        if (mapName.StartsWith("ws:"))
+        {
+            var issuedCommand = long.TryParse(mapName.Replace("ws:", ""), out var mapId)
+                ? $"host_workshop_map {mapId}"
+                : $"ds_workshop_changelevel {mapName.Replace("ws:", "")}";
+                
+            Core.Scheduler.DelayBySeconds(3.0f, () => Core.Engine.ExecuteCommand(issuedCommand));
+        }
+        else
+        {
+            if (!Core.Engine.IsMapValid(mapName))
+            {
+                var localizer = GetPlayerLocalizer(context);
+                var syntax = localizer["command.map_not_found", ConfigurationManager.GetCurrentConfiguration()!.Prefix, mapName];
+                context.Reply(syntax);
+                return;
+            }
+
+            SendMessageToPlayers(Core.PlayerManager.GetAllValidPlayers(), (p, localizer) =>
+            {
+                return (localizer["command.changing_map", ConfigurationManager.GetCurrentConfiguration()!.Prefix, adminName, mapName], MessageType.Chat);
+            });
+
+            Core.Scheduler.DelayBySeconds(3.0f, () => Core.Engine.ExecuteCommand($"changelevel {mapName}"));
+        }
     }
 }

@@ -7,6 +7,7 @@ namespace Admins.SuperCommands.Commands;
 public partial class ServerCommands
 {
     [Command("giveitem", permission: "admins.commands.giveitem")]
+    [CommandAlias("give")]
     public void Command_GiveItem(ICommandContext context)
     {
         if (!context.IsSentByPlayer)
@@ -38,14 +39,21 @@ public partial class ServerCommands
         }
 
         var itemName = context.Args[1];
+        var adminName = context.Sender!.Controller.PlayerName;
         foreach (var player in players)
         {
             GiveItemToPlayer(player, itemName);
-        }
-
-        if (players.Any())
-        {
-            NotifyItemGiven(players, context.Sender!, itemName);
+            SendMessageToPlayers(Core.PlayerManager.GetAllValidPlayers(), (p, localizer) =>
+            {
+                var playerName = GetPlayerName(player);
+                return (localizer[
+                    "command.giveitem_success",
+                    ConfigurationManager.GetCurrentConfiguration()!.Prefix,
+                    adminName,
+                    itemName,
+                    playerName
+                ], MessageType.Chat);
+            });
         }
     }
 
@@ -80,14 +88,20 @@ public partial class ServerCommands
             players.Add(player);
         }
 
+        var adminName = context.Sender!.Controller.PlayerName; 
         foreach (var player in players)
         {
             StripAndGiveKnife(player);
-        }
-
-        if (players.Any())
-        {
-            NotifyPlayersAction(players, context.Sender!, "command.melee_success");
+            SendMessageToPlayers(Core.PlayerManager.GetAllValidPlayers(), (p, localizer) =>
+            {
+                var playerName = GetPlayerName(player);
+                return (localizer[
+                    "command.melee_success",
+                    ConfigurationManager.GetCurrentConfiguration()!.Prefix,
+                    adminName,
+                    playerName
+                ], MessageType.Chat);
+            });
         }
     }
 
@@ -122,14 +136,20 @@ public partial class ServerCommands
             players.Add(player);
         }
 
+        var adminName = context.Sender!.Controller.PlayerName;
         foreach (var player in players)
         {
             RemoveAllItems(player);
-        }
-
-        if (players.Any())
-        {
-            NotifyPlayersAction(players, context.Sender!, "command.disarm_success");
+            SendMessageToPlayers(Core.PlayerManager.GetAllValidPlayers(), (p, localizer) =>
+            {
+                var playerName = GetPlayerName(player);
+                return (localizer[
+                    "command.disarm_success",
+                    ConfigurationManager.GetCurrentConfiguration()!.Prefix,
+                    adminName,
+                    playerName
+                ], MessageType.Chat);
+            });
         }
     }
 
@@ -155,7 +175,7 @@ public partial class ServerCommands
         }
 
         var adminName = context.Sender!.Controller.PlayerName;
-        SendMessageToPlayers(Core.PlayerManager.GetAllPlayers().ToList(), null, (p, localizer) =>
+        SendMessageToPlayers(Core.PlayerManager.GetAllPlayers().ToList(), (p, localizer) =>
         {
             return (localizer[
                 "command.clean_success",
@@ -179,23 +199,6 @@ public partial class ServerCommands
         {
             itemServices.GiveItem(itemName);
         }
-    }
-
-    private void NotifyItemGiven(List<IPlayer> players, IPlayer sender, string itemName)
-    {
-        var adminName = sender.Controller.PlayerName;
-
-        SendMessageToPlayers(players, sender, (p, localizer) =>
-        {
-            var playerName = GetPlayerName(p);
-            return (localizer[
-                "command.giveitem_success",
-                ConfigurationManager.GetCurrentConfiguration()!.Prefix,
-                adminName,
-                itemName,
-                playerName
-            ], MessageType.Chat);
-        });
     }
 
     private void StripAndGiveKnife(IPlayer player)
