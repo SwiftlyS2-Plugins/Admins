@@ -1,6 +1,7 @@
 using SwiftlyS2.Shared.Commands;
 using SwiftlyS2.Shared.Natives;
 using SwiftlyS2.Shared.Players;
+using SwiftlyS2.Shared.Sounds;
 using SwiftlyS2.Shared.SchemaDefinitions;
 
 namespace Admins.SuperCommands.Commands;
@@ -1276,10 +1277,22 @@ public partial class ServerCommands
 
     private void StartBeaconOnPlayer(IPlayer player)
     {
-        if(player == null || !player.IsValid)return;
+        if (player == null || !player.IsValid)
+        {
+            return;
+        }
 
-        _beaconPlayers.Add(player);
-        _beaconEffectTimerToken[player] = Core.Scheduler.RepeatBySeconds(1f, ()=>
+        if (_beaconEffectTimerToken.ContainsKey(player))
+        {
+            return;
+        }
+
+        if (!_beaconPlayers.Contains(player))
+        {
+            _beaconPlayers.Add(player);
+        }
+
+        _beaconEffectTimerToken[player] = Core.Scheduler.RepeatBySeconds(BeaconRepeatIntervalSeconds, () =>
         {
             DrawBeaconOnPlayer(player);
         });
@@ -1287,9 +1300,12 @@ public partial class ServerCommands
 
     private void StopBeaconOnPlayer(IPlayer player)
     {
-        if(player == null || !player.IsValid)return;
+        if (player == null)
+        {
+            return;
+        }
 
-        if(_beaconEffectTimerToken.TryGetValue(player, out var token))
+        if (_beaconEffectTimerToken.TryGetValue(player, out var token))
         {
             token.Cancel();
             _beaconEffectTimerToken.Remove(player);
@@ -1297,95 +1313,118 @@ public partial class ServerCommands
         _beaconPlayers.Remove(player);
     }
 
+    private const int BeaconSegments = 16;
+    private const int BeaconLayers = 2;
+    private const float BeaconBaseRadius = 20.0f;
+    private const float BeaconRadiusStep = 14.0f;
+    private const float BeaconBeamLife = 0.95f;
+    private const float BeaconLayerLifeStep = 0.15f;
+    private const float BeaconBeamWidth = 2.0f;
+    private const float BeaconHeightOffset = 6.0f;
+    private const float BeaconRepeatIntervalSeconds = 1.5f;
+    private const string BeaconSound = "UIPanorama.popup_accept_match_beep";
+
+    private static readonly (float Cos, float Sin)[] BeaconUnitCircle = BuildBeaconUnitCircle();
+    private static readonly Color BeaconTColor = Color.FromBuiltin(System.Drawing.Color.Red);
+    private static readonly Color BeaconCtColor = Color.FromBuiltin(System.Drawing.Color.Blue);
+    private static readonly Color BeaconNeutralColor = Color.FromBuiltin(System.Drawing.Color.White);
+
     public void DrawBeaconOnPlayer(IPlayer? player)
     {
-        if(player == null || !player.IsValid || player.Pawn == null || player.PlayerPawn == null || player.Pawn.LifeState != (byte)LifeState_t.LIFE_ALIVE || player.PlayerPawn.AbsOrigin == null)return;
-        
-        Vector mid =  new Vector(player.PlayerPawn.AbsOrigin.Value.X ,player.PlayerPawn.AbsOrigin.Value.Y, player.PlayerPawn.AbsOrigin.Value.Z);
-
-        int lines = 20;
-        int[] ent = new int[lines];
-        CBeam?[] beam_ent = new CBeam?[lines];
-
-        // draw piecewise approx by stepping angle
-        // and joining points with a dot to dot
-        float step = (float)(2.0f * Math.PI) / (float)lines;
-        float radius = 20.0f;
-
-        float angle_old = 0.0f;
-        float angle_cur = step;
-
-        float BeaconTimerSecond = 0.0f;
-
-        
-        for(int i = 0; i < lines; i++) // Drawing Beacon Circle
+        if (!TryGetBeaconContext(player, out var center, out var color))
         {
-            Vector start = angle_on_circle(angle_old, radius, mid);
-            Vector end = angle_on_circle(angle_cur, radius, mid);
-
-            if(player.Controller.TeamNum == 2)
-            {
-                var result = DrawLaserBetween(start, end, Color.FromBuiltin(System.Drawing.Color.Red), 1.0f, 2.0f);
-                ent[i] = result.Item1;
-                beam_ent[i] = result.Item2;
-            } 
-            if(player.Controller.TeamNum == 3)
-            {
-                var result = DrawLaserBetween(start, end, Color.FromBuiltin(System.Drawing.Color.Blue), 1.0f, 2.0f);
-                ent[i] = result.Item1;
-                beam_ent[i] = result.Item2;
-            }
-
-            angle_old = angle_cur;
-            angle_cur += step;
+            return;
         }
-        
-        Core.Scheduler.DelayAndRepeatBySeconds(0.1f, 0.1f, ()=>
+
+        for (var layer = 0; layer < BeaconLayers; layer++)
         {
-            if (BeaconTimerSecond >= 0.9f)
-            {
-                return;
-            }
-            for(int i = 0; i < lines; i++) // Moving Beacon Circle
-            {
-                Vector start = angle_on_circle(angle_old, radius, mid);
-                Vector end = angle_on_circle(angle_cur, radius, mid);
+            var radius = BeaconBaseRadius + (layer * BeaconRadiusStep);
+            var life = BeaconBeamLife - (layer * BeaconLayerLifeStep);
+            DrawBeaconRing(center, radius, color, life, BeaconBeamWidth);
+        }
 
-                TeleportLaser(beam_ent[i], start, end);
-
-                angle_old = angle_cur;
-                angle_cur += step;
-            }
-            radius += 10;
-            BeaconTimerSecond += 0.1f;
-        });
-        PlaySoundOnPlayer(player, "sounds/tools/sfm/beep.vsnd_c");
-        return;
+        PlaySoundOnPlayer(player, BeaconSound);
     }
+
+    private bool TryGetBeaconContext(IPlayer? player, out Vector center, out Color color)
+    {
+        center = VectorZero;
+        color = BeaconNeutralColor;
+
+        if (player == null || !player.IsValid || player.Controller == null || !player.Controller.IsValid)
+        {
+            return false;
+        }
+
+        var pawn = player.PlayerPawn;
+        if (!IsValidAlivePawn(pawn) || pawn!.AbsOrigin == null)
+        {
+            return false;
+        }
+
+        var origin = pawn.AbsOrigin.Value;
+        center = new Vector(origin.X, origin.Y, origin.Z + BeaconHeightOffset);
+        color = GetBeaconColorForTeam(player.Controller.TeamNum);
+
+        return true;
+    }
+
+    private static (float Cos, float Sin)[] BuildBeaconUnitCircle()
+    {
+        var points = new (float Cos, float Sin)[BeaconSegments];
+        var step = (2.0 * Math.PI) / BeaconSegments;
+
+        for (var i = 0; i < BeaconSegments; i++)
+        {
+            var angle = i * step;
+            points[i] = ((float)Math.Cos(angle), (float)Math.Sin(angle));
+        }
+
+        return points;
+    }
+
+    private static Color GetBeaconColorForTeam(byte teamNum)
+    {
+        return teamNum switch
+        {
+            (byte)Team.T => BeaconTColor,
+            (byte)Team.CT => BeaconCtColor,
+            _ => BeaconNeutralColor
+        };
+    }
+
+    private void DrawBeaconRing(Vector center, float radius, Color color, float life, float width)
+    {
+        var previous = GetPointOnBeaconCircle(BeaconSegments - 1, radius, center);
+
+        for (var i = 0; i < BeaconSegments; i++)
+        {
+            var current = GetPointOnBeaconCircle(i, radius, center);
+            DrawLaserBetween(previous, current, color, life, width);
+            previous = current;
+        }
+    }
+
+    private static Vector GetPointOnBeaconCircle(int index, float radius, Vector center)
+    {
+        var unit = BeaconUnitCircle[index];
+        return new Vector(
+            center.X + (radius * unit.Cos),
+            center.Y + (radius * unit.Sin),
+            center.Z
+        );
+    }
+
     private void PlaySoundOnPlayer(IPlayer? player, string soundPath)
     {
-        if(player == null || !player.IsValid)return;
-        player.ExecuteCommand($"play {soundPath}");
+        if(player == null || !player.IsValid) return;
+
+        using var soundEvent = new SoundEvent(soundPath);
+        soundEvent.SourceEntityIndex = -1;
+        soundEvent.Recipients.AddRecipient(player.PlayerID);
+        soundEvent.Emit();
     }
 
-    public void TeleportLaser(CBeam? laser,Vector start, Vector end)
-    {
-        if(laser == null || !laser.IsValid)return;
-        // set pos
-        laser.Teleport(start, RotationZero, VectorZero);
-        // end pos
-        // NOTE: we cant just move the whole vec
-        laser.EndPos.X = end.X;
-        laser.EndPos.Y = end.Y;
-        laser.EndPos.Z = end.Z;
-        laser.EndPosUpdated();
-    }
-    private Vector angle_on_circle(float angle, float radius, Vector mid)
-    {
-        // {r * cos(x),r * sin(x)} + mid
-        // NOTE: we offset Z so it doesn't clip into the ground
-        return new Vector((float)(mid.X + (radius * Math.Cos(angle))),(float)(mid.Y + (radius * Math.Sin(angle))), mid.Z + 6.0f);
-    }
     private static readonly Vector VectorZero = new Vector(0, 0, 0);
     private static readonly QAngle RotationZero = new QAngle(0, 0, 0);
     public (int, CBeam?) DrawLaserBetween(Vector startPos, Vector endPos, Color color, float life, float width)
@@ -1406,7 +1445,10 @@ public partial class ServerCommands
         beam.EndPos.Z = endPos.Z;
         beam.DispatchSpawn();
 
-        Core.Scheduler.DelayBySeconds(life, () => {if(beam != null && beam.IsValid) beam.Despawn(); }); // destroy beam after specific time
+        Core.Scheduler.DelayBySeconds(life, () => {
+            if(beam != null && beam.IsValid) 
+                beam.Despawn(); 
+        });
 
         return ((int)beam.Index, beam);
     }
