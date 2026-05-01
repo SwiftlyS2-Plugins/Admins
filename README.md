@@ -142,6 +142,8 @@ The Immunity Mode system controls how admins can interact with other admins base
 |---------|-----------|-----------|-------------|
 | `!freeze` | `admins.commands.freeze` | `<player>` | Prevent a player from moving or looking around |
 | `!unfreeze` | `admins.commands.unfreeze` | `<player>` | Remove freeze restriction from a player |
+| `!bury` | `admins.commands.bury` | `<player> [depth]` | Move a player down by a depth offset (default 10 units) |
+| `!unbury` | `admins.commands.unbury` | `<player> [depth]` | Move a player up by a depth offset (default 15 units) |
 | `!noclip` | `admins.commands.noclip` | None | Toggle noclip mode for yourself (pass through walls) |
 | `!noclip` | `admins.commands.noclip` | `<player>` | Toggle noclip mode for a player (pass through walls) |
 | `!setspeed` | `admins.commands.setspeed` | `<speed_multiplier>` | Set your movement speed multiplier (0.1-10.0x) |
@@ -159,6 +161,16 @@ The Immunity Mode system controls how admins can interact with other admins base
 | `!beacon` | `admins.commands.beacon` | `<player>` | Toggle beacon effect on a player (glowing outline visible through walls) |
 | `!kick` | `admins.commands.kick` | `<player>` | Kick a player from the server |
 
+#### Visual & Screen Effects
+
+| Command | Permission | Arguments | Description |
+|---------|-----------|-----------|-------------|
+| `!blind` | `admins.commands.blind` | `<player> <hold_seconds>` | Fade player screen to black for a duration |
+| `!unblind` | `admins.commands.unblind` | `<player>` | Clear any active blind effect |
+| `!color` | `admins.commands.color` | `<player> <r> <g> <b> [a]` | Set player render tint (0-255 per channel) |
+| `!glow` | `admins.commands.glow` | `<player> <r> <g> <b> [a]` | Enable translucent render glow (0-255 per channel) |
+| `!shake` | `admins.commands.shake` | `<player>` | Shake player view with fixed intensity |
+
 #### Identity & Economy
 
 | Command | Permission | Arguments | Description |
@@ -173,6 +185,7 @@ The Immunity Mode system controls how admins can interact with other admins base
 | Command | Permission | Arguments | Description |
 |---------|-----------|-----------|-------------|
 | `!respawn` | `admins.commands.respawn` | `<player>` | Respawn a dead player (if in freeze time) |
+| `!hrespawn` | `admins.commands.hrespawn` | `<player>` | Respawn a player at their last death position |
 | `!swap` | `admins.commands.swap` | `<player>` | Swap player to the opposite team |
 | `!team` | `admins.commands.team` | `<player> <team>` | Move player to specific team (ct, t, spec, none) |
 
