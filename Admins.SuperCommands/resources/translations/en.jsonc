@@ -26,6 +26,7 @@
     "command.unblind_success": "{0} [green]{1}[default] has unblinded player '[green]{2}[default]'.",
     "command.color_success": "{0} [green]{1}[default] has set color for player '[green]{2}[default]' to [green]{3},{4},{5},{6}[default].",
     "command.glow_success": "{0} [green]{1}[default] has set glow for player '[green]{2}[default]' to [green]{3},{4},{5},{6}[default].",
+    "command.shake_success": "{0} [green]{1}[default] has shaken player '[green]{2}[default]'.",
     "command.no_valid_targets": "{0} No valid targets found.",
     "command.self_dead": "{0} You must be alive.",
     "command.target_not_alive": "{0} Target player '[green]{1}[default]' is not alive.",

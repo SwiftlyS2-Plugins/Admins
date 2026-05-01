@@ -350,9 +350,9 @@ public partial class ServerCommands
         }
 
         var adminName = context.Sender!.Controller.PlayerName;
+        ApplyBlind(players, holdSeconds);
         foreach (var player in players)
         {
-            ApplyBlind(player, holdSeconds);
             SendMessageToPlayers(Core.PlayerManager.GetAllValidPlayers(), (p, localizer) =>
             {
                 var playerName = GetPlayerName(player);
@@ -398,6 +398,7 @@ public partial class ServerCommands
         }
 
         var adminName = context.Sender!.Controller.PlayerName;
+        ApplyUnblind(players);
         foreach (var player in players)
         {
             var controller = player.Controller;
@@ -406,7 +407,6 @@ public partial class ServerCommands
                 continue;
             }
 
-            ApplyUnblind(player);
             SendMessageToPlayers(Core.PlayerManager.GetAllValidPlayers(), (p, localizer) =>
             {
                 var playerName = GetPlayerName(player);
@@ -583,6 +583,54 @@ public partial class ServerCommands
                     g,
                     b,
                     a
+                ], MessageType.Chat);
+            });
+        }
+    }
+
+    [Command("shake", permission: "admins.commands.shake")]
+    public void Command_Shake(ICommandContext context)
+    {
+        if (!context.IsSentByPlayer)
+        {
+            SendByPlayerOnly(context);
+            return;
+        }
+
+        if (!ValidateArgsCount(context, 1, "shake", ["<player>"]))
+        {
+            return;
+        }
+
+        var targetPlayers = FindTargetPlayers(context, context.Args[0]);
+        if (targetPlayers == null)
+        {
+            return;
+        }
+
+        var players = new List<IPlayer>();
+        foreach (var player in targetPlayers)
+        {
+            if (!CanApplyActionToPlayer(context.Sender!, player))
+            {
+                NotifyAdminOfImmunityProtection(context, GetPlayerName(player), GetPlayerImmunityLevel(player));
+                continue;
+            }
+            players.Add(player);
+        }
+
+        var adminName = context.Sender!.Controller.PlayerName;
+        ApplyShake(players);
+        foreach (var player in players)
+        {
+            SendMessageToPlayers(Core.PlayerManager.GetAllValidPlayers(), (p, localizer) =>
+            {
+                var playerName = GetPlayerName(player);
+                return (localizer[
+                    "command.shake_success",
+                    ConfigurationManager.GetCurrentConfiguration()!.Prefix,
+                    adminName,
+                    playerName
                 ], MessageType.Chat);
             });
         }
@@ -1296,18 +1344,18 @@ public partial class ServerCommands
 
     private static readonly Color BlindColor = Color.Black;
 
-    private void ApplyBlind(IPlayer player, float holdSeconds)
+    private void ApplyBlind(IEnumerable<IPlayer> players, float holdSeconds)
     {
-        ColorScreen(player, BlindColor, holdSeconds);
+        ColorScreen(players, BlindColor, holdSeconds);
     }
 
-    private void ApplyUnblind(IPlayer player)
+    private void ApplyUnblind(IEnumerable<IPlayer> players)
     {
-        ColorScreen(player, BlindColor, 0.0f, 0.0f);
+        ColorScreen(players, BlindColor, 0.0f, 0.0f);
     }
 
     private void ColorScreen(
-        IPlayer player,
+        IEnumerable<IPlayer> players,
         Color color,
         float hold = 0.1f,
         float fade = 0.2f,
@@ -1333,7 +1381,11 @@ public partial class ServerCommands
 
         netMessage.Flags = (uint)flag;
         netMessage.Color = color.R | ((uint)color.G << 8) | ((uint)color.B << 16) | ((uint)color.A << 24);
-        netMessage.SendToPlayer(player.PlayerID);
+        foreach (var player in players)
+        {
+            netMessage.Recipients.AddRecipient(player.PlayerID);
+        }
+        netMessage.Send();
     }
 
     private void ApplyColorize(IPlayer player, int r, int g, int b, int a)
@@ -1359,6 +1411,20 @@ public partial class ServerCommands
         pawn!.RenderMode = RenderMode_t.kRenderTransAlpha;
         pawn.Render = new(r, g, b, a);
         pawn.RenderUpdated();
+    }
+
+    private void ApplyShake(IEnumerable<IPlayer> players)
+    {
+        using var netMessage = Core.NetMessage.Create<CUserMessageShake>();
+        netMessage.Duration = 1.0f;
+        netMessage.Amplitude = 10.0f;
+        netMessage.Frequency = 1.0f;
+        netMessage.Command = 0;
+        foreach (var player in players)
+        {
+            netMessage.Recipients.AddRecipient(player.PlayerID);
+        }
+        netMessage.Send();
     }
 
     private enum FadeFlags
