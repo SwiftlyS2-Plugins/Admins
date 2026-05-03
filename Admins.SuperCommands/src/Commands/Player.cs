@@ -650,18 +650,19 @@ public partial class ServerCommands
     }
 
     [GameEventHandler(HookMode.Post)]
-    public void OnPlayerDeath(EventPlayerDeath e)
+    public HookResult OnPlayerDeath(EventPlayerDeath e)
     {
         var player = e.UserIdPlayer;
-        if (player == null) return;
+        if (player == null) return HookResult.Continue;
 
         var pawn = player.PlayerPawn;
         if (pawn == null || !pawn.IsValid || pawn.AbsOrigin == null)
         {
-            return;
+            return HookResult.Continue;
         }
 
         _playerLastCoords[player] = pawn.AbsOrigin.Value;
+        return HookResult.Continue;
     }
 
     [Command("kick", permission: "admins.commands.kick")]
