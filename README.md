@@ -14,225 +14,233 @@
 > [!warning]
 > This plugin is still in beta.
 
+One plugin for everything admin related: admins and groups, bans, gags and mutes, player and server commands, votes and a single `!admin` menu. It replaces the former `Admins.Core`, `Admins.Bans`, `Admins.Comms`, `Admins.Menu` and `Admins.SuperCommands` plugins and uses the same database tables, so existing data keeps working.
+
 ## Table of Contents
 
+- [Installation](#installation)
+- [Upgrading from the split plugins](#upgrading-from-the-split-plugins)
 - [Building](#building)
-- [Publishing](#publishing)
-- [Database Connection Key](#database-connection-key)
+- [Database](#database)
+- [Configuration](#configuration)
 - [Immunity Mode](#immunity-mode)
+- [Admin Menu](#admin-menu)
+- [Targeting Players](#targeting-players)
 - [Commands & Permissions](#commands--permissions)
 - [Server Console Admin Management](#server-console-admin-management)
+- [Developer API](#developer-api)
+
+## Installation
+
+1. Extract the release zip so the `Admins` folder lands in your SwiftlyS2 `plugins` directory.
+2. Add a database connection named `admins` (see [Database](#database)).
+3. Start the server. The tables are created on first load and `config.jsonc` is generated in the plugin's config folder.
+
+## Upgrading from the split plugins
+
+1. Install `Admins` as above.
+2. **Delete** the `Admins.Core`, `Admins.Bans`, `Admins.Comms`, `Admins.Menu` and `Admins.SuperCommands` plugin folders. Every command now lives in `Admins`; an old plugin left in place registers its commands a second time.
+3. Start the server. On the first load the plugin:
+   - imports the server GUID from the `Admins.Core` data folder (`server_id.txt`). Admins, groups, bans and sanctions are scoped to that GUID, so keeping it is what keeps them applying to this server;
+   - if it has no `config.jsonc` yet, builds one from the `Admins.Core`, `Admins.Bans` and `Admins.Comms` configs. The old files are not modified; remove them once you have checked the result.
+
+Plugins that used the old shared interfaces (`Admins.Admins.V1`, `Admins.Bans.V1`, ...) need to move to the [Developer API](#developer-api).
 
 ## Building
 
-- Open the project in your preferred .NET IDE (e.g., Visual Studio, Rider, VS Code).
-- Build the project. The output DLL and resources will be placed in the `build/` directory.
-- The publish process will also create a zip file for easy distribution.
+- Build `Admins.csproj` with the .NET 10 SDK. The plugin and its resources are written to `build/`.
+- `dotnet publish -c Release` produces the deployable plugin in `build/publish/Admins/` and a zip of it.
 
-## Publishing
+## Database
 
-- Use the `dotnet publish -c Release` command to build and package your plugin.
-- Distribute the generated zip file or the contents of the `build/publish` directory.
+The plugin uses the SwiftlyS2 database connection named `admins` and supports SQLite, MySQL, MariaDB and PostgreSQL. The schema is the one the split plugins created; migrations run on load.
 
-## Database Connection Key
+With `UseDatabase` set to `false` nothing is persisted, and admins can only be supplied by other plugins through the API.
 
-The database connection is using the key `admins`. It supports SQLite, MySQL, MariaDB and PostgreSQL.
+## Configuration
+
+`config.jsonc` documents every key in a comment. Edits are applied while the server runs.
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `Prefix` | `[[blue]SwiftlyS2[default]]` | Prefix of every chat message. Supports color tags. |
+| `UseDatabase` | `true` | Store everything in the `admins` connection. |
+| `TimeZone` | `UTC` | Time zone of displayed dates, as an IANA or Windows id. |
+| `ImmunityMode` | `1` | See [Immunity Mode](#immunity-mode). |
+| `Admins.DatabaseSyncIntervalSeconds` | `60` | How often admins and groups are reloaded, so changes made elsewhere apply. `0` disables it (use `!reloadadmins`). |
+| `Bans.DatabaseSyncIntervalSeconds` | `30` | How often online players are re-checked against the bans table, so bans issued on other servers take effect. `0` disables it. |
+| `Bans.Reasons` | list | Reasons offered by the ban form. |
+| `Bans.DurationsInSeconds` | list | Durations offered by the ban form. `0` is permanent. |
+| `Bans.KickOnSteamAuthorizationFailure` | `true` | Kick players whose Steam authorization fails. Turning it off lets players in during Steam outages, but their bans and admin rights cannot be checked until they authorize. |
+| `Comms.DatabaseSyncIntervalSeconds` | `30` | How often the gags and mutes of online players are reloaded. `0` disables it. |
+| `Comms.Reasons` | list | Reasons offered by the gag/mute form. |
+| `Comms.DurationsInSeconds` | list | Durations offered by the gag/mute form. `0` is permanent. |
+| `Comms.EnableAdminChat` | `true` | Send team chat starting with `AdminChatStartCharacter` to admin chat instead of the team. |
+| `Comms.AdminChatStartCharacter` | `@` | The admin chat prefix. |
 
 ## Immunity Mode
 
-The Immunity Mode system controls how admins can interact with other admins based on their immunity levels. You can configure this in your `config.json` file under the `ImmunityMode` property.
+The Immunity Mode controls how admins can act on other admins based on their immunity levels. Set it with the `ImmunityMode` key in `config.jsonc`. An admin's immunity is the highest of their own and their groups' immunity.
 
 ### Available Modes
 
-#### Mode 0: Ignore Immunity (IgnoreImmunity)
-- **Behavior**: Any admin can affect any other admin, regardless of immunity levels.
-- **Use Case**: Completely disable the immunity system.
-- **Config Value**: `0`
+| Value | Mode | An admin can target another admin when |
+|-------|------|----------------------------------------|
+| `0` | `IgnoreImmunity` | always |
+| `1` | `ProtectFromLowerAccess` (default) | their immunity is **higher than or equal to** the target's |
+| `2` | `ProtectFromEqualOrLowerAccess` | their immunity is **strictly higher** than the target's |
+| `3` | `ProtectWithNoImmunityBypass` | like `2`, but two admins with immunity `0` can target each other |
 
-#### Mode 1: Protect from Lower Access (ProtectFromLowerAccess)
-- **Behavior**: Admins can only affect other admins with lower or equal immunity levels.
-- **Example**: An admin with immunity 50 can affect admins with immunity 0-49, but not 50+.
-- **Config Value**: `1`
-
-#### Mode 2: Protect from Equal or Lower Access (ProtectFromEqualOrLowerAccess)
-- **Behavior**: Same as Mode 1 - admins can only affect other admins with strictly lower immunity levels.
-- **Note**: Currently identical to Mode 1 in behavior.
-- **Config Value**: `2`
-
-#### Mode 3: Protect with No Immunity Bypass (ProtectWithNoImmunityBypass)
-- **Default**: No
-- **Behavior**: Same protection as Mode 2, except admins with 0 immunity can affect each other regardless.
-- **Use Case**: Allow newer admins (immunity 0) to affect each other, while protecting admins with immunity.
-- **Config Value**: `3`
+Players without an admin entry on this server can always be targeted, and an admin can always target themselves. Commands run from the server console ignore immunity.
 
 ### Configuration Example
 
-```json
+```jsonc
 {
-  "ImmunityMode": 1
+  "Main": {
+    "ImmunityMode": 1
+  }
 }
 ```
 
+## Admin Menu
+
+`!admin` opens a single menu built for the admin who opens it. Every entry is filtered by that admin's permissions, so whatever is shown can be used.
+
+- **Players**: pick a player (immune players are marked), then act on them from one page:
+  - **Ban…** and **Gag / Mute…** open a one-page form: by SteamID or IP, the action for gags and mutes (gag, mute or silence), a preset or typed reason, a preset or typed duration (`30m`, `12h`, `7d`), an *All servers* toggle, then **Confirm**.
+  - **Remove gag** / **Remove mute**, shown only while one is active.
+  - Kick, Slay, Slap, the Freeze / God mode / Noclip / Beacon toggles, Respawn, Respawn where they died, Move to team…, Swap team, Go to player and Bring player.
+- **Bans**: ban a SteamID or IP that is not on the server, or browse the active bans and unban one.
+- **Gags & Mutes**: the same for gags, mutes and silences.
+- **Server**: restart the round, remove dropped weapons, change the map.
+
+Typing a ban, gag, mute or silence command in chat without arguments opens the player picker and then the matching form.
+
+The permissions `admins.menu.bans` and `admins.menu.comms` from the old menu plugin still allow banning, gagging and muting on this server from the menu. Other plugins can add their own entries through `IAdminMenuAPI` (see [Developer API](#developer-api)).
+
+## Targeting Players
+
+Wherever a command takes `<player>`:
+
+| Form | Matches |
+|------|---------|
+| `name` | The exact name, otherwise a partial name matching exactly one player. A partial name matching several players is refused. |
+| `#userid` | The player with that user id. |
+| `76561198000000000` | The player with that SteamID64. |
+| `@all`, `@t`, `@ct`, `@me`, `@aim`, ... | The SwiftlyS2 target selectors. |
+
+Bans, gags and mutes, `!kick`, `!bring` and `!votekick` leave the admin running them out of group selectors such as `@all`.
+
+The ban, gag, mute and silence commands also take the SteamID64 of a player who is not on the server, or for the `ip` variants an IP address.
+
 ## Commands & Permissions
 
-### Menu Permissions
+Commands work in chat (`!command`) and, unless marked as player only, from the server console (`sw_command`). `<argument>` is required, `[argument]` optional. Durations are written like `30m`, `12h` or `7d`; `0` is permanent.
 
-| Category | Permission | Description |
-|---------|-----------|-------------|
-| `Bans` | `admins.menu.bans` | Manage server bans |
-| `Comms` | `admins.menu.comms` | Manage admin comms |
+### Admin Management
 
-### Core Commands
+| Command | Arguments | Permission | Description |
+|---------|-----------|------------|-------------|
+| `!admin` | | `admins.commands.admin` | Open the admin menu. Player only. |
+| `!admins` | `<give\|edit\|remove\|list> ...` | `admins.command.admins` | Manage admins. See [Server Console Admin Management](#server-console-admin-management). |
+| `!groups` | `<give\|edit\|remove\|list> ...` | `admins.command.groups` | Manage groups. |
+| `!reloadadmins` | | `admins.command.reloadadmins` | Reload admins and groups from the database. |
 
-| Command | Permission | Description |
-|---------|-----------|-------------|
-| `!admins <give/edit/remove/list>` | `admins.command.admins` | Manage server admins |
-| `!groups <give/edit/remove/list>` | `admins.command.groups` | Manage admin groups |
-| `!admin` | `admins.commands.admin` | Open admin menu |
+The last three keep their singular `admins.command.` prefix, so `admins.commands.*` does not grant them.
 
-### Ban Commands (Admins.Bans)
+### Bans
 
-| Command | Permission | Description |
-|---------|-----------|-------------|
-| `!ban <player> <duration> [reason]` | `admins.commands.ban` | Ban a player by SteamID |
-| `!globalban <player> <duration> [reason]` | `admins.commands.globalban` | Ban a player globally across all servers |
-| `!banip <player> <duration> [reason]` | `admins.commands.ban` | Ban a player by IP address |
-| `!globalbanip <player> <duration> [reason]` | `admins.commands.globalban` | Ban a player's IP globally |
-| `!bano <steamid64> <duration> [reason]` | `admins.commands.ban` | Ban offline player by SteamID64 |
-| `!globalbano <steamid64> <duration> [reason]` | `admins.commands.globalban` | Ban offline player globally by SteamID64 |
-| `!banipo <ip_address> <duration> [reason]` | `admins.commands.ban` | Ban offline player by IP address |
-| `!globalbanipo <ip_address> <duration> [reason]` | `admins.commands.globalban` | Ban offline player's IP globally |
-| `!unban <steamid64>` | `admins.commands.unban` | Unban a player by SteamID64 |
-| `!unbanip <ip_address>` | `admins.commands.unban` | Unban an IP address |
+| Command | Arguments | Permission | Description |
+|---------|-----------|------------|-------------|
+| `!ban` | `<player\|steamid64> <time> <reason>` | `admins.commands.ban` | Ban by SteamID. |
+| `!globalban` | `<player\|steamid64> <time> <reason>` | `admins.commands.globalban` | Ban by SteamID on every server. |
+| `!banip` | `<player\|ip> <time> <reason>` | `admins.commands.ban` | Ban by IP address. |
+| `!globalbanip` | `<player\|ip> <time> <reason>` | `admins.commands.globalban` | Ban by IP address on every server. |
+| `!unban` | `<steamid64>` | `admins.commands.unban` | Lift the active bans of a SteamID that apply to this server: its own and global ones. |
+| `!unbanip` | `<ip>` | `admins.commands.unban` | Lift the active bans of an IP address that apply to this server. |
 
-### Communication Commands (Admins.Comms)
+### Gags & Mutes
 
-| Command | Permission | Description |
-|---------|-----------|-------------|
-| `!gag <player> <duration> [reason]` | `admins.commands.gag` | Prevent player from using voice chat |
-| `!globalgag <player> <duration> [reason]` | `admins.commands.globalgag` | Gag player globally across all servers |
-| `!mute <player> <duration> [reason]` | `admins.commands.mute` | Prevent player from using text chat |
-| `!globalmute <player> <duration> [reason]` | `admins.commands.globalmute` | Mute player globally across all servers |
-| `!silence <player> <duration> [reason]` | `admins.commands.silence` | Prevent player from using both voice and text chat |
-| `!globalsilence <player> <duration> [reason]` | `admins.commands.globalsilence` | Silence player globally across all servers |
-| `!ungag <player>` | `admins.commands.ungag` | Remove gag from player |
-| `!unmute <player>` | `admins.commands.unmute` | Remove mute from player |
-| `!unsilence <player>` | `admins.commands.unsilence` | Remove silence from player |
-| `!gago <steamid64> <duration> [reason]` | `admins.commands.gag` | Gag offline player by SteamID64 |
-| `!muteo <steamid64> <duration> [reason]` | `admins.commands.mute` | Mute offline player by SteamID64 |
-| `!silenceo <steamid64> <duration> [reason]` | `admins.commands.silence` | Silence offline player by SteamID64 |
-| `!globalgago <steamid64> <duration> [reason]` | `admins.commands.globalgag` | Gag offline player globally |
-| `!globalmuteo <steamid64> <duration> [reason]` | `admins.commands.globalmute` | Mute offline player globally |
-| `!globalsilenceo <steamid64> <duration> [reason]` | `admins.commands.globalsilence` | Silence offline player globally |
-| `!gagip <player> <duration> [reason]` | `admins.commands.gag` | Gag player by IP address |
-| `!muteip <player> <duration> [reason]` | `admins.commands.mute` | Mute player by IP address |
-| `!silenceip <player> <duration> [reason]` | `admins.commands.silence` | Silence player by IP address |
-| `!globalgagip <player> <duration> [reason]` | `admins.commands.globalgag` | Gag IP globally |
-| `!globalmuteip <player> <duration> [reason]` | `admins.commands.globalmute` | Mute IP globally |
-| `!globalsilenceip <player> <duration> [reason]` | `admins.commands.globalsilence` | Silence IP globally |
-| `!gagipo <ip_address> <duration> [reason]` | `admins.commands.gag` | Gag offline player by IP |
-| `!muteipo <ip_address> <duration> [reason]` | `admins.commands.mute` | Mute offline player by IP |
-| `!silenceipo <ip_address> <duration> [reason]` | `admins.commands.silence` | Silence offline player by IP |
-| `!globalgagipo <ip_address> <duration> [reason]` | `admins.commands.globalgag` | Gag offline player's IP globally |
-| `!globalmuteipo <ip_address> <duration> [reason]` | `admins.commands.globalmute` | Mute offline player's IP globally |
-| `!globalsilenceipo <ip_address> <duration> [reason]` | `admins.commands.globalsilence` | Silence offline player's IP globally |
+A **gag** blocks text chat, a **mute** blocks voice chat and a **silence** does both.
 
-### Player Modification Commands (Admins.SuperCommands)
+| Command | Arguments | Permission | Description |
+|---------|-----------|------------|-------------|
+| `!gag` | `<player\|steamid64> <time> <reason>` | `admins.commands.gag` | Block text chat. |
+| `!mute` | `<player\|steamid64> <time> <reason>` | `admins.commands.mute` | Block voice chat. |
+| `!silence` | `<player\|steamid64> <time> <reason>` | `admins.commands.silence` | Block text and voice chat. |
+| `!globalgag` | `<player\|steamid64> <time> <reason>` | `admins.commands.globalgag` | Block text chat on every server. |
+| `!globalmute` | `<player\|steamid64> <time> <reason>` | `admins.commands.globalmute` | Block voice chat on every server. |
+| `!globalsilence` | `<player\|steamid64> <time> <reason>` | `admins.commands.globalsilence` | Block both on every server. |
+| `!gagip`, `!muteip`, `!silenceip` | `<player\|ip> <time> <reason>` | `admins.commands.gag`, `.mute`, `.silence` | The same, by IP address. |
+| `!globalgagip`, `!globalmuteip`, `!globalsilenceip` | `<player\|ip> <time> <reason>` | `admins.commands.globalgag`, `.globalmute`, `.globalsilence` | The same, by IP address on every server. |
+| `!ungag` | `<player\|steamid64>` | `admins.commands.ungag` | Lift the active gags that apply to this server. |
+| `!unmute` | `<player\|steamid64>` | `admins.commands.unmute` | Lift the active mutes that apply to this server. |
+| `!unsilence` | `<player\|steamid64>` | `admins.commands.unsilence` | Lift both. |
 
-#### Health & Armor
+The `o` variants of the old plugin still work and behave like the commands above, since those now accept offline players too: `!gago`, `!muteo`, `!silenceo` and their `global` forms take a SteamID64; `!gagipo`, `!muteipo`, `!silenceipo` and their `global` forms take an IP address.
 
-| Command | Permission | Arguments | Description |
-|---------|-----------|-----------|-------------|
-| `!hp` | `admins.commands.hp` | `<player> <health> [armour] [helmet]` | Set player health (0-100), armor (0-100), and optionally helmet. Helmet = assaultsuit. |
-| `!health` | `admins.commands.hp` | `<player> <health> [armour] [helmet]` | Set player health (0-100), armor (0-100), and optionally helmet. Helmet = assaultsuit. |
+### Chat & Notifications
 
-#### Movement & Physics
+| Permission | Effect |
+|------------|--------|
+| `admins.chat` | Receive admin chat: team chat starting with `@` (configurable) from anyone goes to the holders of this permission instead of the team. A gagged player can still use it. |
+| `admins.notify` | Be told when a player with bans, gags or mutes on record connects. |
 
-| Command | Permission | Arguments | Description |
-|---------|-----------|-----------|-------------|
-| `!freeze` | `admins.commands.freeze` | `<player>` | Prevent a player from moving or looking around |
-| `!unfreeze` | `admins.commands.unfreeze` | `<player>` | Remove freeze restriction from a player |
-| `!bury` | `admins.commands.bury` | `<player> [depth]` | Move a player down by a depth offset (default 10 units) |
-| `!unbury` | `admins.commands.unbury` | `<player> [depth]` | Move a player up by a depth offset (default 15 units) |
-| `!noclip` | `admins.commands.noclip` | None | Toggle noclip mode for yourself (pass through walls) |
-| `!noclip` | `admins.commands.noclip` | `<player>` | Toggle noclip mode for a player (pass through walls) |
-| `!setspeed` | `admins.commands.setspeed` | `<speed_multiplier>` | Set your movement speed multiplier (0.1-10.0x) |
-| `!speed` | `admins.commands.setspeed` | `<speed_multiplier>` | Set your movement speed multiplier (0.1-10.0x) |
-| `!setgravity` | `admins.commands.setgravity` | `<gravity_multiplier>` | Set your gravity multiplier (0.1-10.0x) |
-| `!gravity` | `admins.commands.setgravity` | `<gravity_multiplier>` | Set your gravity multiplier (0.1-10.0x) |
+### Player Commands
 
-#### Damage & Effects
+Every player command except `!goto`, which only moves you, respects immunity.
 
-| Command | Permission | Arguments | Description |
-|---------|-----------|-----------|-------------|
-| `!slay` | `admins.commands.slay` | `<player>` | Kill a player instantly |
-| `!slap` | `admins.commands.slap` | `<player> [damage]` | Slap and damage a player (0-100 damage, with knockback) |
-| `!god` | `admins.commands.god` | `<player>` | Toggle god mode (invulnerability) for a player |
-| `!beacon` | `admins.commands.beacon` | `<player>` | Toggle beacon effect on a player (glowing outline visible through walls) |
-| `!kick` | `admins.commands.kick` | `<player>` | Kick a player from the server |
+| Command | Arguments | Permission | Description |
+|---------|-----------|------------|-------------|
+| `!kick` | `<player> [reason]` | `admins.commands.kick` | Kick a player. |
+| `!slay` | `<player>` | `admins.commands.slay` | Kill a player. |
+| `!slap` | `<player> [damage]` | `admins.commands.slap` | Slap a player, optionally dealing 0-100 damage. |
+| `!freeze` / `!unfreeze` | `<player>` | `admins.commands.freeze` / `admins.commands.unfreeze` | Stop / restore a player's movement. |
+| `!bury` / `!unbury` | `<player> [depth]` | `admins.commands.bury` / `admins.commands.unbury` | Move a player down (default 10 units) / up (default 15 units). |
+| `!noclip` | `[player]` | `admins.commands.noclip` | Toggle noclip. Without a player, toggles it for yourself. |
+| `!god` | `<player>` | `admins.commands.god` | Toggle god mode. |
+| `!beacon` | `[player]` | `admins.commands.beacon` | Toggle a beacon. Without a player, toggles it for yourself. |
+| `!setspeed`, `!speed` | `<player> [multiplier]` | `admins.commands.setspeed` | Set the speed multiplier (0.1-10, default 1). |
+| `!setgravity`, `!gravity` | `<player> [multiplier]` | `admins.commands.setgravity` | Set the gravity multiplier (0.1-10, default 1). |
+| `!hp`, `!health` | `<player> <health> [armor] [helmet 0\|1]` | `admins.commands.hp` | Set health (0-100) and armor (0-100), optionally with a helmet. |
+| `!blind` / `!unblind` | `<player> <hold_seconds>` / `<player>` | `admins.commands.blind` / `admins.commands.unblind` | Fade a player's screen to black for 0.1-60 seconds / clear it. |
+| `!shake` | `<player>` | `admins.commands.shake` | Shake a player's view. |
+| `!color` | `<player> <r> <g> <b> [a]` | `admins.commands.color` | Tint a player (0-255 per channel). |
+| `!glow` | `<player> <r> <g> <b> [a]` | `admins.commands.glow` | Give a player a colored glow (0-255 per channel). |
+| `!rename` | `<player> <new_name>` | `admins.commands.rename` | Rename a player. |
+| `!givemoney`, `!money` | `<player> <amount>` | `admins.commands.givemoney` | Add 1-16000 money. |
+| `!setmoney` | `<player> <amount>` | `admins.commands.setmoney` | Set money to 0-16000. |
+| `!respawn` | `<player>` | `admins.commands.respawn` | Respawn a player who is on a team. |
+| `!hrespawn`, `!1up` | `<player>` | `admins.commands.hrespawn` | Respawn a player where they last died. |
+| `!team` | `<player> <ct\|t\|spec\|none>` | `admins.commands.team` | Move a player to a team. |
+| `!swap` | `<player>` | `admins.commands.swap` | Move a player to the other team. |
+| `!goto` | `<player>` | `admins.commands.goto` | Teleport yourself behind a player. Player only. |
+| `!bring` | `<player>` | `admins.commands.bring` | Teleport a player to you. Player only. |
+| `!giveitem`, `!give` | `<player> <item_name>` | `admins.commands.giveitem` | Give an item by its name, e.g. `weapon_ak47`. |
+| `!melee` | `<player>` | `admins.commands.melee` | Strip a player's weapons and give a knife. |
+| `!disarm` | `<player>` | `admins.commands.disarm` | Strip all of a player's weapons. |
 
-#### Visual & Screen Effects
+### Server Commands
 
-| Command | Permission | Arguments | Description |
-|---------|-----------|-----------|-------------|
-| `!blind` | `admins.commands.blind` | `<player> <hold_seconds>` | Fade player screen to black for a duration |
-| `!unblind` | `admins.commands.unblind` | `<player>` | Clear any active blind effect |
-| `!color` | `admins.commands.color` | `<player> <r> <g> <b> [a]` | Set player render tint (0-255 per channel) |
-| `!glow` | `admins.commands.glow` | `<player> <r> <g> <b> [a]` | Enable translucent render glow (0-255 per channel) |
-| `!shake` | `admins.commands.shake` | `<player>` | Shake player view with fixed intensity |
+| Command | Arguments | Permission | Description |
+|---------|-----------|------------|-------------|
+| `!restartround`, `!rr` | `[delay]` | `admins.commands.restartround` | Restart the round after 0-300 seconds (default 1). |
+| `!say` | `<message>` | `admins.commands.say` | Send a chat message to everyone. |
+| `!csay` | `<message>` | `admins.commands.csay` | Send a centered message to everyone. |
+| `!rcon` | `<command>` | `admins.commands.rcon` | Run a server console command. |
+| `!map`, `!changemap` | `<map_name\|ws:workshop_id>` | `admins.commands.map` | Change the map after 3 seconds. |
+| `!clean` | | `admins.commands.clean` | Remove every dropped weapon from the map. |
 
-#### Identity & Economy
+### Votes
 
-| Command | Permission | Arguments | Description |
-|---------|-----------|-----------|-------------|
-| `!rename` | `admins.commands.rename` | `<player> <new_name>` | Rename a player to a new name |
-| `!givemoney` | `admins.commands.givemoney` | `<player> <amount>` | Add money to a player (1-16000) |
-| `!money` | `admins.commands.givemoney` | `<player> <amount>` | Add money to a player (1-16000) |
-| `!setmoney` | `admins.commands.setmoney` | `<player> <amount>` | Set player's money to exact amount (0-16000) |
+Votes run for 30 seconds in a menu shown to every player. The option with the most votes wins; a tie or no votes ends without a result.
 
-#### Respawn & Team
-
-| Command | Permission | Arguments | Description |
-|---------|-----------|-----------|-------------|
-| `!respawn` | `admins.commands.respawn` | `<player>` | Respawn a dead player (if in freeze time) |
-| `!hrespawn` | `admins.commands.hrespawn` | `<player>` | Respawn a player at their last death position |
-| `!swap` | `admins.commands.swap` | `<player>` | Swap player to the opposite team |
-| `!team` | `admins.commands.team` | `<player> <team>` | Move player to specific team (ct, t, spec, none) |
-
-#### Teleportation
-
-| Command | Permission | Arguments | Description |
-|---------|-----------|-----------|-------------|
-| `!goto` | `admins.commands.goto` | `<player>` | Teleport yourself to a player (appears behind them) |
-| `!bring` | `admins.commands.bring` | `<player>` | Teleport a player to yourself |
-
-### Weapon Commands (Admins.SuperCommands)
-
-| Command | Permission | Arguments | Description |
-|---------|-----------|-----------|-------------|
-| `!giveitem` | `admins.commands.giveitem` | `<player> <item_name>` | Give a weapon/item to a player by item definition name |
-| `!melee` | `admins.commands.melee` | `<player>` | Strip all weapons and give knife only |
-| `!disarm` | `admins.commands.disarm` | `<player>` | Remove all weapons and items from a player |
-| `!clean` | `admins.commands.clean` | None | Remove all dropped weapons from the map |
-
-### Server Control Commands (Admins.SuperCommands)
-
-| Command | Permission | Arguments | Description |
-|---------|-----------|-----------|-------------|
-| `!rr` | `admins.commands.restartround` | `<delay>` | Restart current round with default delay |
-| `!restartround` | `admins.commands.restartround` | `<delay>` | Restart current round with optional delay (0-300 seconds) |
-| `!say` | `admins.commands.say` | `<message>` | Send a chat message displayed to all players |
-| `!csay` | `admins.commands.csay` | `<message>` | Send a centered message displayed to all players |
-| `!rcon` | `admins.commands.rcon` | `<command>` | Execute an RCON command on the server |
-| `!map` | `admins.commands.map` | `<map_name>` | Change the current map |
-| `!changemap` | `admins.commands.changemap` | `<map_name>` | Change the current map (alias for !map) |
-
-### Vote Commands (Admins.SuperCommands)
-| Command | Permission | Arguments | Description |
-|---------|-----------|-----------|-------------|
-| `!vote kick` | `admins.commands.votekick` | `<player>` | Start a vote to kick a player |
-| `!vote map` | `admins.commands.votemap` | `<map1> <map2> [map3] [map4] [...]` | Start a vote to change the map with 2-4 options |
-| `!vote` | `admins.commands.vote` | `<question> <option1> <option2> [option3] [option4] [...]` | Start a custom vote with a question and 2-4 options |
+| Command | Arguments | Permission | Description |
+|---------|-----------|------------|-------------|
+| `!vote` | `<question> <option1> <option2> [option3...]` | `admins.commands.vote` | Start a custom vote. |
+| `!votekick` | `<player>` | `admins.commands.votekick` | Vote to kick a player. *Yes* has to beat *No*. |
+| `!votemap` | `<map1> <map2> [map3...]` | `admins.commands.votemap` | Vote on a map change. The winning map is loaded when the vote ends. |
 
 ## Server Console Admin Management
 
@@ -429,8 +437,8 @@ This displays all groups configured for the current server, showing:
 
 ```bash
 # Create admin groups
-sw_groups give owner 100 "admins.commands.*"
-sw_groups give admin 90 "admins.commands.*"
+sw_groups give owner 100 "admins.*"
+sw_groups give admin 90 "admins.commands.*,admins.chat,admins.notify"
 sw_groups give moderator 50 "admins.commands.ban,admins.commands.kick,admins.commands.mute,admins.commands.gag"
 sw_groups give vip 10 "admins.commands.noclip"
 
@@ -461,7 +469,33 @@ sw_admins edit 76561198123456789 groups "admin"
 
 ### Permission Wildcards
 
-You can use wildcards in permissions:
-- `admins.commands.*` - All command permissions
-- `admins.commands.ban*` - All ban-related permissions (ban, banip, globalban, etc.)
-- `admins.commands.mute*` - All mute-related permissions
+A permission ending in `.*` grants every permission that starts with the part before it:
+- `admins.*` - every permission of this plugin
+- `admins.commands.*` - every `admins.commands.` permission. It does not include `admins.command.admins`, `admins.command.groups`, `admins.command.reloadadmins`, `admins.chat` or `admins.notify`.
+
+## Developer API
+
+Reference `Admins.Contract.dll` (shipped in `resources/exports`) as a compile-time dependency without copying it into your plugin, then fetch the interfaces in `UseSharedInterface`:
+
+| Key (`AdminsInterfaceKeys`) | Interface | Purpose |
+|-----------------------------|-----------|---------|
+| `Admins.Admins.V2` | `IAdminsManager` | Look up admins and their immunity, check `CanTarget`, add, update and remove admins, `OnAdminLoad`. |
+| `Admins.Groups.V2` | `IGroupsManager` | Look up, add, update and remove groups. |
+| `Admins.Server.V2` | `IServerManager` | The server GUID that admins, groups, bans and sanctions are scoped to. |
+| `Admins.Bans.V2` | `IBansManager` | Find, add, update and remove bans, and the ban events. |
+| `Admins.Comms.V2` | `ICommsManager` | Find, add, update and remove gags and mutes, the active sanction of an online player, and the sanction events. |
+| `Admins.Menu.V2` | `IAdminMenuAPI` | Add an entry to the `!admin` menu, or build and open the menu. |
+
+```csharp
+public override void UseSharedInterface(IInterfaceManager interfaceManager)
+{
+    if (!interfaceManager.HasSharedInterface(AdminsInterfaceKeys.Menu)) return;
+
+    var adminMenu = interfaceManager.GetSharedInterface<IAdminMenuAPI>(AdminsInterfaceKeys.Menu);
+    adminMenu.RegisterSubmenu("myplugin.tools", ["myplugin.admin"], player => "My tools", player => BuildMenu(player));
+}
+```
+
+The entry is shown to admins holding any of the listed permissions, or to everyone who can open `!admin` when the list is empty, and closing your menu returns to the admin menu. Call `UnregisterSubmenu` when your plugin unloads.
+
+Changes from the split plugins' API: every contract lives in the single `Admins.Contract` assembly, the keys moved from `V1` to `V2`, the database methods are async, `SetBans` / `ClearBans` / `SetSanctions` / `ClearSanctions` were removed, and `IGamePlayer` / `IConfigurationManager` are gone.
