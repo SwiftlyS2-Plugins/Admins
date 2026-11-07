@@ -3,6 +3,7 @@ using Admins.Database;
 using Admins.Database.Models;
 using Admins.Models;
 using Admins.Services.Access;
+using Admins.Services.Presence;
 using Admins.Services.Server;
 using Admins.Shared;
 using Dommel;
@@ -33,6 +34,7 @@ public sealed partial class CommsService : ICommsManager, IDisposable
     private readonly Messenger _messenger;
     private readonly TargetResolver _targets;
     private readonly MenuShortcuts _shortcuts;
+    private readonly PresenceService _presence;
     private readonly IDisposable? _configSubscription;
     private readonly CancellationTokenSource _voiceTimer;
     private volatile CommsConfiguration _config;
@@ -52,7 +54,8 @@ public sealed partial class CommsService : ICommsManager, IDisposable
         AccessService access,
         Messenger messenger,
         TargetResolver targets,
-        MenuShortcuts shortcuts)
+        MenuShortcuts shortcuts,
+        PresenceService presence)
     {
         _core = core;
         _logger = logger;
@@ -62,6 +65,7 @@ public sealed partial class CommsService : ICommsManager, IDisposable
         _messenger = messenger;
         _targets = targets;
         _shortcuts = shortcuts;
+        _presence = presence;
         _config = config.CurrentValue.Comms;
 
         _configSubscription = config.OnChange(c =>
@@ -73,6 +77,7 @@ public sealed partial class CommsService : ICommsManager, IDisposable
 
         core.Registrator.Register(this);
         _voiceTimer = core.Scheduler.DelayAndRepeatBySeconds(1f, 1f, EnforceVoice);
+        presence.Changed += OnPresenceChanged;
         RestartSyncTimer();
 
         // Covers a hot reload; on a cold start nobody is connected yet.
@@ -210,20 +215,24 @@ public sealed partial class CommsService : ICommsManager, IDisposable
 
     private void Bump(int slot) => _versions[slot] = _versions.GetValueOrDefault(slot) + 1;
 
+    private void OnPresenceChanged() => _core.Scheduler.NextTick(EnforceVoice);
+
+    // A hidden admin is muted too, so an open mic cannot give them away.
     private void EnforceVoice()
     {
         foreach (var player in _messenger.Humans().ToList())
         {
             var slot = player.Slot;
+            var mute = GetActive(player, SanctionKind.Mute);
 
-            if (GetActive(player, SanctionKind.Mute) is { } mute)
+            if (mute is not null || _presence.IsHidden(player))
             {
                 var flags = player.VoiceFlags;
                 if (flags == VoiceFlagValue.Muted) continue;
 
                 _savedVoice.TryAdd(slot, flags);
                 player.VoiceFlags = VoiceFlagValue.Muted;
-                _messenger.Chat(player, "mute.message", mute.AdminName, _messenger.Timestamp(player, mute.ExpiresAt), mute.Reason);
+                if (mute is not null) _messenger.Chat(player, "mute.message", mute.AdminName, _messenger.Timestamp(player, mute.ExpiresAt), mute.Reason);
             }
             else if (_savedVoice.Remove(slot, out var original))
             {
@@ -245,6 +254,13 @@ public sealed partial class CommsService : ICommsManager, IDisposable
         if (teamonly && config.EnableAdminChat && !string.IsNullOrEmpty(marker) && text.StartsWith(marker, StringComparison.Ordinal))
         {
             SendAdminChat(player, text[marker.Length..].Trim());
+            return HookResult.Stop;
+        }
+
+        // Commands already ran before this hook; only the chat line itself would give a hidden admin away.
+        if (_presence.IsHidden(player))
+        {
+            if (text.Length > 0 && text[0] is not ('!' or '/')) _messenger.Chat(player, "hide.chat_blocked");
             return HookResult.Stop;
         }
 
@@ -593,6 +609,7 @@ public sealed partial class CommsService : ICommsManager, IDisposable
         _voiceTimer.Cancel();
         _syncTimer?.Cancel();
         _configSubscription?.Dispose();
+        _presence.Changed -= OnPresenceChanged;
 
         foreach (var (slot, flags) in _savedVoice)
         {

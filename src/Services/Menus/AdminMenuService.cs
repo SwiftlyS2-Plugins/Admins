@@ -2,7 +2,9 @@ using Admins.Contract;
 using Admins.Services.Access;
 using Admins.Services.Bans;
 using Admins.Services.Comms;
+using Admins.Services.Esp;
 using Admins.Services.PlayerControl;
+using Admins.Services.Presence;
 using Admins.Services.ServerControl;
 using Admins.Shared;
 using Microsoft.Extensions.Logging;
@@ -28,6 +30,8 @@ public sealed partial class AdminMenuService : IAdminMenuAPI
     private readonly CommsService _comms;
     private readonly PlayerControlService _control;
     private readonly ServerControlService _server;
+    private readonly EspService _esp;
+    private readonly PresenceService _presence;
     private readonly Lock _registryLock = new();
     private readonly List<Registration> _registrations = [];
 
@@ -40,6 +44,8 @@ public sealed partial class AdminMenuService : IAdminMenuAPI
         CommsService comms,
         PlayerControlService control,
         ServerControlService server,
+        EspService esp,
+        PresenceService presence,
         MenuShortcuts shortcuts)
     {
         _core = core;
@@ -50,6 +56,8 @@ public sealed partial class AdminMenuService : IAdminMenuAPI
         _comms = comms;
         _control = control;
         _server = server;
+        _esp = esp;
+        _presence = presence;
 
         shortcuts.OpenBan = (viewer, type, global) => OpenPicker(viewer, (session, target) => BuildBanForm(viewer, target, session.Menu, type, global));
         shortcuts.OpenComms = (viewer, action, global) => OpenPicker(viewer, (session, target) => BuildCommsForm(viewer, target, session.Menu, action, global));
@@ -111,6 +119,20 @@ public sealed partial class AdminMenuService : IAdminMenuAPI
         if (Has(viewer, "admins.commands.restartround") || Has(viewer, "admins.commands.clean") || Has(viewer, "admins.commands.map"))
         {
             builder.Add(new SubmenuComponent(T(viewer, "menu.server"), s => BuildServerMenu(viewer, s.Menu)));
+        }
+
+        if (Has(viewer, "admins.commands.esp"))
+        {
+            AddSelfToggle(builder, viewer, "menu.esp", () => _esp.IsEnabled(viewer), issuer => _esp.Toggle(issuer));
+        }
+
+        if (Has(viewer, "admins.commands.hide"))
+        {
+            AddSelfToggle(builder, viewer, "menu.hide", () => _presence.IsHidden(viewer), issuer =>
+            {
+                if (_presence.IsHidden(viewer)) _presence.Unhide(issuer);
+                else _presence.Hide(issuer);
+            });
         }
 
         List<Registration> registrations;
@@ -224,6 +246,7 @@ public sealed partial class AdminMenuService : IAdminMenuAPI
         if (Has(viewer, "admins.commands.god")) AddToggle(builder, viewer, target, "menu.player.god", _control.IsGod, _control.SetGod);
         if (Has(viewer, "admins.commands.noclip")) AddToggle(builder, viewer, target, "menu.player.noclip", _control.IsNoclip, _control.SetNoclip);
         if (Has(viewer, "admins.commands.beacon")) AddToggle(builder, viewer, target, "menu.player.beacon", _control.HasBeacon, _control.SetBeacon);
+        if (Has(viewer, "admins.commands.drug")) AddToggle(builder, viewer, target, "menu.player.drug", _control.IsDrugged, _control.SetDrug);
 
         AddAction(builder, viewer, target, "admins.commands.respawn", "menu.player.respawn", (issuer, player, _) => _control.Respawn(issuer, player));
 
@@ -292,6 +315,19 @@ public sealed partial class AdminMenuService : IAdminMenuAPI
         })
         {
             TextProvider = _ => T(viewer, labelKey, T(viewer, target.Resolve(_core) is { } player && isOn(player) ? "menu.on" : "menu.off")),
+        });
+    }
+
+    private void AddSelfToggle(IMenuBuilder builder, IPlayer viewer, string labelKey, Func<bool> isOn, Action<Issuer> toggle)
+    {
+        builder.Add(new ButtonComponent(string.Empty, ctx =>
+        {
+            toggle(Issuer.From(viewer));
+            ctx.Session.Invalidate();
+            return ValueTask.CompletedTask;
+        })
+        {
+            TextProvider = _ => T(viewer, labelKey, T(viewer, isOn() ? "menu.on" : "menu.off")),
         });
     }
 

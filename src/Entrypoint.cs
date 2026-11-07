@@ -4,9 +4,11 @@ using Admins.Models;
 using Admins.Services.Access;
 using Admins.Services.Bans;
 using Admins.Services.Comms;
+using Admins.Services.Esp;
 using Admins.Services.Menus;
 using Admins.Services.Notifications;
 using Admins.Services.PlayerControl;
+using Admins.Services.Presence;
 using Admins.Services.Server;
 using Admins.Services.ServerControl;
 using Admins.Services.Votes;
@@ -41,9 +43,12 @@ public sealed class AdminsPlugin(ISwiftlyCore core) : BasePlugin(core)
             .AddSingleton<MenuShortcuts>()
             .AddSingleton<ServerService>()
             .AddSingleton<AccessService>()
+            .AddSingleton<PresenceService>()
+            .AddSingleton<StatusService>()
             .AddSingleton<BansService>()
             .AddSingleton<CommsService>()
             .AddSingleton<PlayerControlService>()
+            .AddSingleton<EspService>()
             .AddSingleton<ServerControlService>()
             .AddSingleton<VotesService>()
             .AddSingleton<RecordNotifier>()
@@ -56,6 +61,8 @@ public sealed class AdminsPlugin(ISwiftlyCore core) : BasePlugin(core)
                 c.Bans.DurationsInSeconds.Clear();
                 c.Comms.Reasons.Clear();
                 c.Comms.DurationsInSeconds.Clear();
+                c.Status.Header.Clear();
+                c.Status.Footer.Clear();
             })
             .BindConfiguration("Main");
 
@@ -70,9 +77,12 @@ public sealed class AdminsPlugin(ISwiftlyCore core) : BasePlugin(core)
         // Resolving constructs each service, which registers its commands and listeners.
         _services.GetRequiredService<ServerService>().Start(hotReload);
         _services.GetRequiredService<AccessService>();
+        _services.GetRequiredService<PresenceService>();
+        _services.GetRequiredService<StatusService>();
         _services.GetRequiredService<BansService>();
         _services.GetRequiredService<CommsService>();
         _services.GetRequiredService<PlayerControlService>();
+        _services.GetRequiredService<EspService>();
         _services.GetRequiredService<ServerControlService>();
         _services.GetRequiredService<VotesService>();
         _services.GetRequiredService<RecordNotifier>();

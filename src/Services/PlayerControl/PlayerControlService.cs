@@ -23,6 +23,7 @@ public sealed partial class PlayerControlService : IDisposable
     private const float BeaconIntervalSeconds = 1.5f;
     private const string BeaconSound = "UIPanorama.popup_accept_match_beep";
     private const int BeaconSegments = 16;
+    private const float DrugIntervalSeconds = 1f;
     private const int ArmorItemDefinitionIndex = 51;
 
     private static readonly Vector VectorZero = new(0, 0, 0);
@@ -36,6 +37,7 @@ public sealed partial class PlayerControlService : IDisposable
 
     // Game thread only, keyed by slot.
     private readonly Dictionary<int, (ulong SessionId, CancellationTokenSource Timer)> _beacons = [];
+    private readonly Dictionary<int, (ulong SessionId, CancellationTokenSource Timer)> _drugs = [];
     private readonly Dictionary<int, (ulong SessionId, Vector Position)> _deathPositions = [];
 
     public PlayerControlService(ISwiftlyCore core, ILogger<PlayerControlService> logger, AccessService access, Messenger messenger, TargetResolver targets)
@@ -54,11 +56,14 @@ public sealed partial class PlayerControlService : IDisposable
     [GameEventHandler(HookMode.Post)]
     public HookResult OnPlayerDeath(EventPlayerDeath e)
     {
-        if (e.UserIdPlayer is { } player && player.PlayerPawn is { IsValid: true } pawn && pawn.AbsOrigin is { } origin)
+        if (e.UserIdPlayer is not { } player) return HookResult.Continue;
+
+        if (player.PlayerPawn is { IsValid: true } pawn && pawn.AbsOrigin is { } origin)
         {
             _deathPositions[player.Slot] = (player.SessionId, origin);
         }
 
+        StopDrug(player.Slot, clearScreen: true);
         return HookResult.Continue;
     }
 
@@ -66,6 +71,7 @@ public sealed partial class PlayerControlService : IDisposable
     public void OnClientDisconnected(IOnClientDisconnectedEvent e)
     {
         StopBeacon(e.PlayerId);
+        StopDrug(e.PlayerId, clearScreen: false);
         _deathPositions.Remove(e.PlayerId);
     }
 
@@ -73,6 +79,7 @@ public sealed partial class PlayerControlService : IDisposable
     public void OnMapUnload(IOnMapUnloadEvent e)
     {
         foreach (var slot in _beacons.Keys.ToList()) StopBeacon(slot);
+        foreach (var slot in _drugs.Keys.ToList()) StopDrug(slot, clearScreen: false);
         _deathPositions.Clear();
     }
 
@@ -83,6 +90,8 @@ public sealed partial class PlayerControlService : IDisposable
     public bool IsGod(IPlayer target) => AlivePawnOf(target) is { } pawn && !pawn.TakesDamage;
 
     public bool HasBeacon(IPlayer target) => _beacons.TryGetValue(target.Slot, out var beacon) && beacon.SessionId == target.SessionId;
+
+    public bool IsDrugged(IPlayer target) => _drugs.TryGetValue(target.Slot, out var drug) && drug.SessionId == target.SessionId;
 
     public bool HasDeathPosition(IPlayer target) => _deathPositions.TryGetValue(target.Slot, out var death) && death.SessionId == target.SessionId;
 
@@ -204,13 +213,7 @@ public sealed partial class PlayerControlService : IDisposable
 
         // Hold 0 with no fade clears an earlier blind.
         var blind = holdSeconds > 0;
-        using var fade = _core.NetMessage.Create<CUserMessageFade>();
-        fade.Duration = blind ? (uint)(0.2f * 512) : 0;
-        fade.HoldTime = (uint)(holdSeconds * 512);
-        fade.Flags = 0x0001 | 0x0010;
-        fade.Color = 0xFF000000;
-        fade.Recipients.AddRecipient(target.PlayerID);
-        fade.Send();
+        SendFade(target, blind ? 0.2f : 0f, holdSeconds, 0x0001 | 0x0010, 0xFF000000);
 
         _messenger.Broadcast(blind ? "command.blind_success" : "command.unblind_success", issuer.Name, Names.Of(target));
         return true;
@@ -229,6 +232,33 @@ public sealed partial class PlayerControlService : IDisposable
         shake.Send();
 
         _messenger.Broadcast("command.shake_success", issuer.Name, Names.Of(target));
+        return true;
+    }
+
+    public bool SetDrug(Issuer issuer, IPlayer target, bool enabled)
+    {
+        if (!CanAct(issuer, target)) return false;
+
+        if (enabled)
+        {
+            if (AlivePawn(issuer, target) is null) return false;
+
+            if (!IsDrugged(target))
+            {
+                StopDrug(target.Slot, clearScreen: false);
+                var reference = PlayerRef.Of(target);
+                var timer = _core.Scheduler.DelayAndRepeatBySeconds(DrugIntervalSeconds, DrugIntervalSeconds, () => DrugTick(reference));
+                _core.Scheduler.StopOnMapChange(timer);
+                _drugs[target.Slot] = (target.SessionId, timer);
+                DrugTick(reference);
+            }
+        }
+        else
+        {
+            StopDrug(target.Slot, clearScreen: true);
+        }
+
+        _messenger.Broadcast(enabled ? "command.drug_on" : "command.drug_off", issuer.Name, Names.Of(target));
         return true;
     }
 
@@ -504,6 +534,45 @@ public sealed partial class PlayerControlService : IDisposable
         if (_beacons.Remove(slot, out var beacon)) beacon.Timer.Cancel();
     }
 
+    private void StopDrug(int slot, bool clearScreen)
+    {
+        if (!_drugs.Remove(slot, out var drug)) return;
+
+        drug.Timer.Cancel();
+        if (clearScreen && _core.PlayerManager.GetPlayer(slot) is { } player && player.SessionId == drug.SessionId) SendFade(player, 0, 0, 0x0010, 0);
+    }
+
+    // A new random tint and a shake every interval; each fade purges the previous one.
+    private void DrugTick(PlayerRef reference)
+    {
+        if (reference.Resolve(_core) is not { } player || AlivePawnOf(player) is null)
+        {
+            StopDrug(reference.Slot, clearScreen: true);
+            return;
+        }
+
+        using var shake = _core.NetMessage.Create<CUserMessageShake>();
+        shake.Duration = DrugIntervalSeconds;
+        shake.Amplitude = 12f;
+        shake.Frequency = 1.5f;
+        shake.Command = 0;
+        shake.Recipients.AddRecipient(player.PlayerID);
+        shake.Send();
+
+        SendFade(player, 0.3f, DrugIntervalSeconds, 0x0001 | 0x0010, (uint)Random.Shared.Next(0x1000000) | (100u << 24));
+    }
+
+    private void SendFade(IPlayer player, float fadeSeconds, float holdSeconds, uint flags, uint color)
+    {
+        using var fade = _core.NetMessage.Create<CUserMessageFade>();
+        fade.Duration = (uint)(fadeSeconds * 512);
+        fade.HoldTime = (uint)(holdSeconds * 512);
+        fade.Flags = flags;
+        fade.Color = color;
+        fade.Recipients.AddRecipient(player.PlayerID);
+        fade.Send();
+    }
+
     private void DrawBeacon(PlayerRef reference)
     {
         if (reference.Resolve(_core) is not { } player)
@@ -572,5 +641,6 @@ public sealed partial class PlayerControlService : IDisposable
     public void Dispose()
     {
         foreach (var slot in _beacons.Keys.ToList()) StopBeacon(slot);
+        foreach (var slot in _drugs.Keys.ToList()) StopDrug(slot, clearScreen: true);
     }
 }

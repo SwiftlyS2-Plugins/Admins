@@ -3,6 +3,8 @@ using Admins.Contract;
 using Admins.Services.Access;
 using Admins.Services.Bans;
 using Admins.Services.Comms;
+using Admins.Services.Esp;
+using Admins.Services.Presence;
 
 namespace Admins.Models;
 
@@ -25,4 +27,10 @@ public sealed class Configuration
     public BansConfiguration Bans { get; set; } = new();
 
     public CommsConfiguration Comms { get; set; } = new();
+
+    public PresenceConfiguration Presence { get; set; } = new();
+
+    public StatusConfiguration Status { get; set; } = new();
+
+    public EspConfiguration Esp { get; set; } = new();
 }

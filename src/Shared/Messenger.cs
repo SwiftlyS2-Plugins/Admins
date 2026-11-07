@@ -150,6 +150,8 @@ public sealed class Messenger : IDisposable
 
     public string Duration(IPlayer? viewer, TimeSpan length) => Duration(viewer, (long)length.TotalMilliseconds);
 
+    public DateTimeOffset Now() => TimeZoneInfo.ConvertTime(DateTimeOffset.UtcNow, _timeZone);
+
     public void Dispose() => _subscription?.Dispose();
 
     private static TimeZoneInfo ResolveTimeZone(string? id)

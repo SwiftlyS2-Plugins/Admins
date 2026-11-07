@@ -123,6 +123,13 @@ public sealed partial class PlayerControlService
         ForTargets(issuer, query, t => SetBeacon(issuer, t, !HasBeacon(t)));
     }
 
+    [Command("drug", permission: "admins.commands.drug")]
+    public void DrugCommand(ICommandContext context)
+    {
+        if (!Begin(context, "drug", "<player>", 1, out var issuer, out var args)) return;
+        ForTargets(issuer, args[0], t => SetDrug(issuer, t, !IsDrugged(t)));
+    }
+
     [Command("noclip", permission: "admins.commands.noclip")]
     public void NoclipCommand(ICommandContext context)
     {

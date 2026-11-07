@@ -14,7 +14,7 @@
 > [!warning]
 > This plugin is still in beta.
 
-One plugin for everything admin related: admins and groups, bans, gags and mutes, player and server commands, votes and a single `!admin` menu. It replaces the former `Admins.Core`, `Admins.Bans`, `Admins.Comms`, `Admins.Menu` and `Admins.SuperCommands` plugins and uses the same database tables, so existing data keeps working.
+One plugin for everything admin related: admins and groups, bans, gags and mutes, player and server commands, votes, ESP, hiding from players and a single `!admin` menu. It replaces the former `Admins.Core`, `Admins.Bans`, `Admins.Comms`, `Admins.Menu` and `Admins.SuperCommands` plugins and uses the same database tables, so existing data keeps working.
 
 ## Table of Contents
 
@@ -25,6 +25,7 @@ One plugin for everything admin related: admins and groups, bans, gags and mutes
 - [Configuration](#configuration)
 - [Immunity Mode](#immunity-mode)
 - [Admin Menu](#admin-menu)
+- [Hiding, ESP & Status](#hiding-esp--status)
 - [Targeting Players](#targeting-players)
 - [Commands & Permissions](#commands--permissions)
 - [Server Console Admin Management](#server-console-admin-management)
@@ -77,6 +78,14 @@ With `UseDatabase` set to `false` nothing is persisted, and admins can only be s
 | `Comms.DurationsInSeconds` | list | Durations offered by the gag/mute form. `0` is permanent. |
 | `Comms.EnableAdminChat` | `true` | Send team chat starting with `AdminChatStartCharacter` to admin chat instead of the team. |
 | `Comms.AdminChatStartCharacter` | `@` | The admin chat prefix. |
+| `Presence.ConnectMessages` | `true` | Replace the game's join and leave messages with the plugin's. `!hide` fakes these, so with `false` it announces nothing. |
+| `Status.Enabled` | `true` | Answer a player's `status` with the lines below, without hidden admins. |
+| `Status.Header` | list | Lines before the player rows. Placeholders: `{hostname}`, `{map}`, `{humans}`, `{bots}`, `{maxplayers}`, `{date}`, `{time}`. |
+| `Status.Row` | see config | One line per player. Placeholders: `{userid}`, `{name}`, `{steamid}`, `{duration}`, `{ping}`. |
+| `Status.Footer` | `["#end"]` | Lines after the player rows, with the header's placeholders. |
+| `Esp.AllowWhileAlive` | `false` | Show ESP outlines to admins who are alive, not only to dead and spectating ones. |
+
+A placeholder takes a width like `{name,-24}`: the value is padded to 24 characters, on the right for a negative width and on the left for a positive one, and cut when longer.
 
 ## Immunity Mode
 
@@ -110,14 +119,42 @@ Players without an admin entry on this server can always be targeted, and an adm
 - **Players**: pick a player (immune players are marked), then act on them from one page:
   - **Ban…** and **Gag / Mute…** open a one-page form: by SteamID or IP, the action for gags and mutes (gag, mute or silence), a preset or typed reason, a preset or typed duration (`30m`, `12h`, `7d`), an *All servers* toggle, then **Confirm**.
   - **Remove gag** / **Remove mute**, shown only while one is active.
-  - Kick, Slay, Slap, the Freeze / God mode / Noclip / Beacon toggles, Respawn, Respawn where they died, Move to team…, Swap team, Go to player and Bring player.
+  - Kick, Slay, Slap, the Freeze / God mode / Noclip / Beacon / Drug toggles, Respawn, Respawn where they died, Move to team…, Swap team, Go to player and Bring player.
 - **Bans**: ban a SteamID or IP that is not on the server, or browse the active bans and unban one.
 - **Gags & Mutes**: the same for gags, mutes and silences.
 - **Server**: restart the round, remove dropped weapons, change the map.
+- **ESP** and **Hidden**: switch your own ESP and hiding on and off.
 
 Typing a ban, gag, mute or silence command in chat without arguments opens the player picker and then the matching form.
 
 The permissions `admins.menu.bans` and `admins.menu.comms` from the old menu plugin still allow banning, gagging and muting on this server from the menu. Other plugins can add their own entries through `IAdminMenuAPI` (see [Developer API](#developer-api)).
+
+## Hiding, ESP & Status
+
+### Join and leave messages
+
+With `Presence.ConnectMessages` on, the game's own join and leave messages are replaced by "*name* joined the game", once the player has loaded in, and "*name* left the game (*reason*)", the reason being Disconnect, Kicked, Banned or Timed out in each reader's language. These are the messages `!hide` and `!unhide` fake.
+
+### Hiding
+
+`!hide` moves you off your team to no team, which takes you off the scoreboard, and announces that you left. While hidden:
+
+- `status` leaves you out, except for admins holding `admins.commands.hide`, who see you marked *(hidden)*;
+- your chat messages and voice are blocked so they cannot give you away. Chat commands and admin chat still work;
+- you can spectate and use ESP;
+- the team menu stays closed, also after a map change.
+
+`!unhide` announces that you joined and moves you to the spectators. Joining a team in any other way ends the hide the same way, and disconnecting while hidden shows no second leave message.
+
+Hiding does not reach outside the game's own lists: the server browser and other plugins (a website server list, for example) still count you, and the messages of the actions you take as an admin still name you. If the server forces a team on players who have not picked one (`mp_force_pick_time`), that ends the hide.
+
+### ESP
+
+`!esp` outlines every living player through walls, T in red and CT in blue. The outlines are sent only to admins with ESP on who are dead or spectating (or alive too with `Esp.AllowWhileAlive`), so other players never receive them. The outline of a player you spectate in first person is left out, as it would cover your screen. On a full server the outlines appear over a few ticks, one player per tick.
+
+### Status
+
+A player typing `status` in the console gets the lines configured under `Status` instead of the game's output, so hidden admins stay hidden there as well. The server console's own `status` is unchanged.
 
 ## Targeting Players
 
@@ -201,6 +238,7 @@ Every player command except `!goto`, which only moves you, respects immunity.
 | `!noclip` | `[player]` | `admins.commands.noclip` | Toggle noclip. Without a player, toggles it for yourself. |
 | `!god` | `<player>` | `admins.commands.god` | Toggle god mode. |
 | `!beacon` | `[player]` | `admins.commands.beacon` | Toggle a beacon. Without a player, toggles it for yourself. |
+| `!drug` | `<player>` | `admins.commands.drug` | Toggle a drugged screen: a shifting color tint and a shake, until it is toggled off or the player dies. |
 | `!setspeed`, `!speed` | `<player> [multiplier]` | `admins.commands.setspeed` | Set the speed multiplier (0.1-10, default 1). |
 | `!setgravity`, `!gravity` | `<player> [multiplier]` | `admins.commands.setgravity` | Set the gravity multiplier (0.1-10, default 1). |
 | `!hp`, `!health` | `<player> <health> [armor] [helmet 0\|1]` | `admins.commands.hp` | Set health (0-100) and armor (0-100), optionally with a helmet. |
@@ -231,6 +269,16 @@ Every player command except `!goto`, which only moves you, respects immunity.
 | `!rcon` | `<command>` | `admins.commands.rcon` | Run a server console command. |
 | `!map`, `!changemap` | `<map_name\|ws:workshop_id>` | `admins.commands.map` | Change the map after 3 seconds. |
 | `!clean` | | `admins.commands.clean` | Remove every dropped weapon from the map. |
+
+### Admin Tools
+
+See [Hiding, ESP & Status](#hiding-esp--status).
+
+| Command | Arguments | Permission | Description |
+|---------|-----------|------------|-------------|
+| `!esp`, `!wh`, `!xray` | | `admins.commands.esp` | Toggle outlines of every living player through walls. Player only. |
+| `!hide` | | `admins.commands.hide` | Leave your team for no team, out of sight, with a faked leave message. Player only. |
+| `!unhide` | | `admins.commands.hide` | Come back as a spectator, with a faked join message. Player only. |
 
 ### Votes
 
