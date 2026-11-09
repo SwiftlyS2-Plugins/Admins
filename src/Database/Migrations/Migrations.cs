@@ -273,3 +273,73 @@ public class Admins_AddPlayerSessionsTable : Migration
         }
     }
 }
+
+// Lifting used to only end a punishment, so it read as expired. Rows that ended before this read Active until a sync
+// marks them Expired, and earlier lifts cannot be told apart: they end up Expired too.
+[Migration(20270216000000)]
+public class Admins_AddStatusToPunishments : Migration
+{
+    private static readonly string[] Tables = ["bans", "sanctions"];
+
+    public override void Up()
+    {
+        foreach (var table in Tables)
+        {
+            if (!Schema.Table(table).Exists()) continue;
+
+            if (!Schema.Table(table).Column("Status").Exists())
+            {
+                Alter.Table(table).AddColumn("Status").AsInt32().NotNullable().WithDefaultValue(0);
+            }
+
+            if (!Schema.Table(table).Index($"IX_{table}_Status_ExpiresAt").Exists())
+            {
+                Create.Index($"IX_{table}_Status_ExpiresAt").OnTable(table).OnColumn("Status").Ascending().OnColumn("ExpiresAt").Ascending();
+            }
+        }
+    }
+
+    public override void Down()
+    {
+        foreach (var table in Tables)
+        {
+            if (Schema.Table(table).Index($"IX_{table}_Status_ExpiresAt").Exists())
+            {
+                Delete.Index($"IX_{table}_Status_ExpiresAt").OnTable(table);
+            }
+
+            if (Schema.Table(table).Column("Status").Exists())
+            {
+                Delete.Column("Status").FromTable(table);
+            }
+        }
+    }
+}
+
+[Migration(20270216000001)]
+public class Admins_AddIpBanExclusionsTable : Migration
+{
+    private const string Table = "ip_ban_exclusions";
+
+    public override void Up()
+    {
+        if (!Schema.Table(Table).Exists())
+        {
+            Create.Table(Table)
+            .WithColumn("Id").AsInt64().PrimaryKey().Identity()
+            .WithColumn("SteamId64").AsInt64().NotNullable().Unique()
+            .WithColumn("PlayerName").AsString(128).NotNullable()
+            .WithColumn("AdminSteamId64").AsInt64().NotNullable()
+            .WithColumn("AdminName").AsString(128).NotNullable()
+            .WithColumn("CreatedAt").AsInt64().NotNullable();
+        }
+    }
+
+    public override void Down()
+    {
+        if (Schema.Table(Table).Exists())
+        {
+            Delete.Table(Table);
+        }
+    }
+}

@@ -95,17 +95,17 @@ public interface IGroup
 | Member | Description |
 |--------|-------------|
 | `Task<IReadOnlyList<IBan>> FindBansAsync(long? steamId64 = null, string? playerIp = null, BanType? banType = null, RecordStatus status = RecordStatus.All)` | Bans matching the SteamID or the IP, narrowed by type and status. With neither given, every ban. Not limited to this server |
-| `Task<IBan?> FindActiveBanAsync(long steamId64, string? playerIp)` | The active ban that applies to this server for the SteamID or the IP. With `Bans.GlobalBansMatchIp`, a global SteamID ban also matches the IP it was recorded with. The SteamID's own ban comes first, then an IP ban |
+| `Task<IBan?> FindActiveBanAsync(long steamId64, string? playerIp)` | The active ban that applies to this server for the SteamID or the IP. With `Bans.GlobalBansMatchIp`, a global SteamID ban also matches the IP it was recorded with. A SteamID excluded with `!excludeipban` matches by SteamID only. The SteamID's own ban comes first, then an IP ban |
 | `Task<IBan> AddBanAsync(IBan ban)` | Store the ban, kick the online players it matches and raise `OnAdminBanAdded`. Returns the stored copy |
 | `Task UpdateBanAsync(IBan ban)` | Overwrite the row with the same `Id` and raise `OnAdminBanUpdated`. While the ban is active, it kicks the players it matches |
-| `Task RemoveBanAsync(IBan ban)` | Lift the ban by expiring it now. The row stays as history |
-| `Task<AdminRecordCounts> CountBansAsync()` | The bans that apply to this server, active and expired, as the Bans page counts them. Zero without a database |
+| `Task RemoveBanAsync(IBan ban)` | Lift the ban: mark it `Lifted` and end it now. The row stays as history |
+| `Task<AdminRecordCounts> CountBansAsync()` | The bans that apply to this server, active, expired and lifted, as the Bans page counts them. Zero without a database |
 
 | Event | Raised when |
 |-------|-------------|
 | `event Action<IBan>? OnAdminBanAdded` | A ban was stored, by a command, the menu or `AddBanAsync` |
 | `event Action<IBan>? OnAdminBanUpdated` | `UpdateBanAsync` ran; the menu's *Change length* uses it |
-| `event Action<IBan>? OnAdminBanRemoved` | A ban was lifted, by `!unban`, the menu or `RemoveBanAsync` |
+| `event Action<IBan>? OnAdminBanRemoved` | A ban was lifted, by `!unban`, `!globalunban`, the menu or `RemoveBanAsync` |
 
 ```csharp
 public interface IBan
@@ -124,6 +124,7 @@ public interface IBan
     bool GlobalBan { get; set; }       // applies on every server
     long CreatedAt { get; set; }       // 0 when added = now
     long UpdatedAt { get; set; }
+    PunishmentStatus Status { get; }   // Active, Lifted or Expired; your own implementation reports Active or Expired by ExpiresAt
 }
 ```
 
@@ -139,14 +140,14 @@ A gag blocks text chat and a mute blocks voice. A silence is stored as one of ea
 | `ISanction? GetActiveSanction(IPlayer player, SanctionKind kind)` | The active gag or mute that applies to an online player on this server; the longest-running one when there are several. Reads memory, on the game thread |
 | `Task<ISanction> AddSanctionAsync(ISanction sanction)` | Store the sanction, apply it to the online players it matches and raise `OnAdminSanctionAdded`. Returns the stored copy |
 | `Task UpdateSanctionAsync(ISanction sanction)` | Overwrite the row with the same `Id`, reload the sanctions of the players online and raise `OnAdminSanctionUpdated` |
-| `Task RemoveSanctionAsync(ISanction sanction)` | Lift the sanction by expiring it now. The row stays as history |
-| `Task<AdminRecordCounts> CountSanctionsAsync(SanctionKind? sanctionKind = null)` | The sanctions of a kind (`null`: both) that apply to this server, as the Comms page counts them. Zero without a database |
+| `Task RemoveSanctionAsync(ISanction sanction)` | Lift the sanction: mark it `Lifted` and end it now. The row stays as history |
+| `Task<AdminRecordCounts> CountSanctionsAsync(SanctionKind? sanctionKind = null)` | The sanctions of a kind (`null`: both) that apply to this server, active, expired and lifted, as the Comms page counts them. Zero without a database |
 
 | Event | Raised when |
 |-------|-------------|
 | `event Action<ISanction>? OnAdminSanctionAdded` | A sanction was stored, by a command, the menu or `AddSanctionAsync` |
 | `event Action<ISanction>? OnAdminSanctionUpdated` | `UpdateSanctionAsync` ran; the menu's *Change length* uses it |
-| `event Action<ISanction>? OnAdminSanctionRemoved` | A sanction was lifted, by `!ungag`, `!unmute`, `!unsilence`, the menu or `RemoveSanctionAsync` |
+| `event Action<ISanction>? OnAdminSanctionRemoved` | A sanction was lifted, by `!ungag`, `!unmute`, `!unsilence`, their `global` forms, the menu or `RemoveSanctionAsync` |
 
 A silence raises each event twice, once for the gag and once for the mute.
 
@@ -168,6 +169,7 @@ public interface ISanction
     bool GlobalSanction { get; set; }         // applies on every server
     long CreatedAt { get; set; }              // 0 when added = now
     long UpdatedAt { get; set; }
+    PunishmentStatus Status { get; }          // Active, Lifted or Expired; your own implementation reports Active or Expired by ExpiresAt
 }
 ```
 
@@ -239,7 +241,7 @@ For a menu renderer that draws `!admin` from data instead of parsing its text, a
 | `AdminFlowPage(Step, Draft)` | The step shown, and the `IAdminDraft`: `Kind`, `Target`, `ByIp`, `HasReason`, `Reason`, `Length`, `Global`, the `Record` whose length is being changed, the `Steps` in order, `TypedInChat`, and `Preview(length)`, what the player will be shown. `TypedInChat` holds the steps no listed choice fitted (the target, the reason, the length): they read as not picked, and the last step offers `PrintCommand`, which prints the command filled in with the rest, instead of `Confirm` |
 | `IAdminVote` | `Kind` (`Poll`, `Kick`, `Map`), `StartedBy`, the kick's `Target`, `Question(viewer)` (the ballot's title), `Options(viewer)` (a kick's are yes, then no), `Votes(option)`, `Voters`, `Voted`, `SecondsLeft` |
 
-`AdminPlayerState` and `AdminRecordCounts` (`Active`, `Expired`, `All`) are value types: hold them in locals, not in fields, if your plugin must load without Admins.
+`AdminPlayerState` and `AdminRecordCounts` (`Active`, `Expired`, `Lifted`, `All`) are value types: hold them in locals, not in fields, if your plugin must load without Admins.
 
 ---
 
@@ -248,7 +250,8 @@ For a menu renderer that draws `!admin` from data instead of parsing its text, a
 | Enum | Values |
 |------|--------|
 | `ImmunityMode` | `IgnoreImmunity` = 0, `ProtectFromLowerAccess` = 1, `ProtectFromEqualOrLowerAccess` = 2, `ProtectWithNoImmunityBypass` = 3. See [Immunity](../README.md#immunity) |
-| `RecordStatus` | `Active`, `Expired`, `All` |
+| `RecordStatus` | `Active`, `Expired` (ran out), `All`, `Lifted` (lifted by an admin) |
+| `PunishmentStatus` | `Active` = 0, `Lifted` = 1, `Expired` = 2. In force is decided by `ExpiresAt`: lifting also ends a punishment now |
 | `BanType` | `SteamID` = 1, `IP` = 2 |
 | `SanctionType` | `SteamID` = 1, `IP` = 2 |
 | `SanctionKind` | `Gag` = 1 (text chat), `Mute` = 2 (voice) |

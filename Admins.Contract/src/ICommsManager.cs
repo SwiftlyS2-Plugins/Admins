@@ -30,7 +30,7 @@ public interface ICommsManager
     Task UpdateSanctionAsync(ISanction sanction);
 
     /// <summary>
-    /// Lifts a sanction by expiring it now. The row is kept as history.
+    /// Lifts a sanction: marks it <see cref="PunishmentStatus.Lifted"/> and ends it now. The row is kept as history.
     /// </summary>
     Task RemoveSanctionAsync(ISanction sanction);
 

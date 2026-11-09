@@ -303,13 +303,28 @@ public sealed partial class AdminMenuService
 
     private bool CanPunishAny(IPlayer viewer, Punishment kind) => CanPunish(viewer, kind, false) || CanPunish(viewer, kind, true);
 
-    private bool CanLift(IPlayer viewer, Punishment kind) => kind switch
+    private bool CanLift(IPlayer viewer, Punishment kind, bool global)
     {
-        Punishment.Ban => Has(viewer, "admins.commands.unban"),
-        Punishment.Gag => Has(viewer, "admins.commands.ungag"),
-        Punishment.Mute => Has(viewer, "admins.commands.unmute"),
-        Punishment.Silence => Has(viewer, "admins.commands.unsilence"),
-        _ => false,
+        var prefix = global ? "admins.commands.globalun" : "admins.commands.un";
+        return kind switch
+        {
+            Punishment.Ban => Has(viewer, prefix + "ban"),
+            Punishment.Gag => Has(viewer, prefix + "gag"),
+            Punishment.Mute => Has(viewer, prefix + "mute"),
+            Punishment.Silence => Has(viewer, prefix + "silence"),
+            _ => false,
+        };
+    }
+
+    private bool CanLiftAny(IPlayer viewer, Punishment kind) => CanLift(viewer, kind, false) || CanLift(viewer, kind, true);
+
+    /// <summary>The records of <paramref name="kind"/> the viewer may lift, or null for none.</summary>
+    private LiftScope? LiftScopeOf(IPlayer viewer, Punishment kind) => (CanLift(viewer, kind, false), CanLift(viewer, kind, true)) switch
+    {
+        (true, true) => LiftScope.Any,
+        (true, false) => LiftScope.Local,
+        (false, true) => LiftScope.Global,
+        _ => null,
     };
 
     private static readonly Punishment[] CommsKinds = [Punishment.Gag, Punishment.Mute, Punishment.Silence];

@@ -74,9 +74,14 @@ docs/                          API docs
   offline, under the name of its latest session; a removal that finds nobody looks the name up on
   the punishments.
 - With `Bans.GlobalBansMatchIp`, a global SteamID ban also matches the IP recorded on it.
-  `BansService.Matches` and the three queries that pre-filter for it (`FindActiveBanAsync`,
-  `CheckOnlinePlayers`, the IP branch of `FindApplicableActiveAsync`) must agree. The queries spell
-  out one predicate per setting, the way `CommsService.Here` does for its nullable kind.
+  `BansService.Matches` and the two queries that pre-filter for it (`FindActiveBanAsync`,
+  `CheckOnlinePlayers`) must agree. The queries spell out one predicate per setting, the way
+  `CommsService.Here` does for its nullable kind. The unban lookup (`FindApplicableActiveAsync`)
+  does not depend on it: an address finds every ban recorded with it.
+- A SteamID in `ip_ban_exclusions` is held only by bans on its own SteamID. `Matches` reads the
+  cached set (`_ipBanExcluded`, reloaded on every sync tick and after `!excludeipban`) and
+  `FindActiveBanAsync` counts the table, so the two can differ for at most a sync interval. Gags and
+  mutes ignore it.
 - Entities kept past the call that spawned them are held as a `CHandle`: round cleanup removes
   plugin entities, and a held wrapper checks only its address, which a new entity can take. The
   beacon's beams are also marked changed (`*Updated()`) after `DispatchSpawn`, as every beam known
@@ -101,7 +106,8 @@ docs/                          API docs
 - Tables `servers`, `groups`, `admins`, `bans`, `sanctions` keep the split plugins' schema, so
   existing databases and web panels keep working. Never rename or retype a column.
   `player_sessions` is this plugin's own (`20270215000000`); its name avoids the `sessions` table
-  web frameworks sharing the database tend to own.
+  web frameworks sharing the database tend to own. So is `ip_ban_exclusions` (`20270216000001`), and
+  the `Status` column added to `bans` and `sanctions` (`20270216000000`).
 - Migrations `20270214103911`–`…918` reuse the split plugins' ids in the default `VersionInfo`
   ledger, which is what makes existing databases skip them. Never renumber or edit one. A new
   migration takes a new id, guards its create with `Schema.Table(...).Exists()`, and must run on
@@ -116,8 +122,12 @@ docs/                          API docs
   `CountAsync` returns `long`, and a nullable enum folded into one predicate does not translate —
   spell out each case (`CommsService.Here`). Dapper floats (`2.*`) because `SwiftlyS2.CS2` raises
   its floor.
-- Times are Unix milliseconds (`AdminsDatabase.NowMs`); `ExpiresAt = 0` is permanent. Lifting a
-  ban or sanction expires it, and the row stays as history.
+- Times are Unix milliseconds (`AdminsDatabase.NowMs`); `ExpiresAt = 0` is permanent. Nothing
+  deletes a ban or sanction: lifting marks it `Lifted` and sets `ExpiresAt` to now.
+- In force is decided by `ExpiresAt` alone, in every query and in `Status`. The `Status` column maps
+  to `StoredStatus` (the one property named apart from its column; Dommel's type map reads it back by
+  `[Column]`) and only tells a lifted record from one that ran out. It lags: the sync ticks run
+  `AdminsDatabase.MarkExpiredAsync`, which marks ended `Active` rows `Expired` for outside readers.
 
 ## Servers and scope
 
@@ -127,7 +137,11 @@ docs/                          API docs
 - Admins and groups apply where their `Servers` list holds the GUID; bans and sanctions where
   `Server` is it or the global flag is set (`AppliesHere` on each service).
 - The contract's `Find…Async` and the menu's player history are not limited to this server, so the
-  menu offers Remove and Change length only when `AppliesHere`.
+  menu offers the lift and Change length only when `AppliesHere`.
+- `unban`, `ungag`, `unmute` and `unsilence` lift only this server's own records and their
+  `globalun…` forms only global ones (`LiftScope`), each under its own permission; when only the
+  other scope matched, the reply names the other command. The menu lifts a record in its own scope,
+  so `CanLift(viewer, kind, global)` checks the matching permission.
 - `sw_admins remove` and `sw_groups remove` take this server off the list and delete the row only
   when none is left; the API's `Remove…Async` deletes outright.
 

@@ -27,7 +27,7 @@ public interface IBansManager
     Task UpdateBanAsync(IBan ban);
 
     /// <summary>
-    /// Lifts a ban by expiring it now. The row is kept as history.
+    /// Lifts a ban: marks it <see cref="PunishmentStatus.Lifted"/> and ends it now. The row is kept as history.
     /// </summary>
     Task RemoveBanAsync(IBan ban);
 

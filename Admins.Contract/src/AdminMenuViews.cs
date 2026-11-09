@@ -130,5 +130,8 @@ public readonly record struct AdminPlayerState(
 /// <summary>Records that apply to this server (its own and every global one), by status.</summary>
 public readonly record struct AdminRecordCounts(int Active, int Expired)
 {
-    public int All => Active + Expired;
+    /// <summary>Lifted by an admin; not counted in <see cref="Expired"/>.</summary>
+    public int Lifted { get; init; }
+
+    public int All => Active + Expired + Lifted;
 }

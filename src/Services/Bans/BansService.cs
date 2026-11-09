@@ -29,6 +29,7 @@ public sealed partial class BansService : IBansManager, IDisposable
     private readonly MenuShortcuts _shortcuts;
     private readonly IDisposable? _configSubscription;
     private volatile BansConfiguration _config;
+    private volatile IReadOnlySet<ulong> _ipBanExcluded = new HashSet<ulong>();
     private CancellationTokenSource? _syncTimer;
 
     public BansService(
@@ -61,6 +62,7 @@ public sealed partial class BansService : IBansManager, IDisposable
 
         core.Registrator.Register(this);
         RestartSyncTimer();
+        ReloadExclusions();
     }
 
     public BansConfiguration Config => _config;
@@ -123,24 +125,27 @@ public sealed partial class BansService : IBansManager, IDisposable
         }
     }
 
-    // One query for the whole server instead of one per player.
+    // One query for the whole server instead of one per player. The same tick keeps the table's statuses and the IP ban
+    // exclusions in step with other servers.
     private void CheckOnlinePlayers()
     {
         if (!_database.Enabled) return;
 
         var online = _messenger.Humans().Where(p => p.IsAuthorized).Select(PlayerRef.Of).ToList();
-        if (online.Count == 0) return;
 
         _ = Task.Run(async () =>
         {
             try
             {
+                using var db = _database.Connect();
+                await SyncTablesAsync(db).ConfigureAwait(false);
+                if (online.Count == 0) return;
+
                 var steamIds = online.Select(p => (long)p.SteamId).Where(id => id != 0).Distinct().ToList();
                 var ips = online.Select(p => p.Ip).Where(ip => ip.Length > 0).Distinct().ToList();
                 var now = AdminsDatabase.NowMs;
                 var guid = _server.Guid;
 
-                using var db = _database.Connect();
                 var bans = (_config.GlobalBansMatchIp
                     ? await db.SelectAsync<Ban>(b =>
                         ((b.BanType == BanType.SteamID && steamIds.Contains(b.SteamId64)) || ((b.BanType == BanType.IP || b.GlobalBan == true) && ips.Contains(b.PlayerIp)))
@@ -179,9 +184,9 @@ public sealed partial class BansService : IBansManager, IDisposable
     private bool Matches(Ban ban, ulong steamId, string ip)
     {
         if (ban.BanType == BanType.SteamID && steamId != 0 && (ulong)ban.SteamId64 == steamId) return true;
+        if (ip.Length == 0 || _ipBanExcluded.Contains(steamId)) return false;
 
-        return (ban.BanType == BanType.IP || (ban.GlobalBan && _config.GlobalBansMatchIp))
-            && ip.Length > 0 && Net.NormalizeIp(ban.PlayerIp) == ip;
+        return (ban.BanType == BanType.IP || (ban.GlobalBan && _config.GlobalBansMatchIp)) && Net.NormalizeIp(ban.PlayerIp) == ip;
     }
 
     private void Kick(PlayerRef target, Ban ban)
@@ -305,7 +310,7 @@ public sealed partial class BansService : IBansManager, IDisposable
     }
 
     /// <summary>
-    /// How many bans that apply to this server are active, and how many have ended.
+    /// How many bans that apply to this server are active, how many ran out and how many were lifted.
     /// </summary>
     public async Task<AdminRecordCounts> CountBansAsync()
     {
@@ -314,7 +319,8 @@ public sealed partial class BansService : IBansManager, IDisposable
         using var db = _database.Connect();
         var active = await db.CountAsync(Here(RecordStatus.Active)).ConfigureAwait(false);
         var expired = await db.CountAsync(Here(RecordStatus.Expired)).ConfigureAwait(false);
-        return new AdminRecordCounts((int)active, (int)expired);
+        var lifted = await db.CountAsync(Here(RecordStatus.Lifted)).ConfigureAwait(false);
+        return new AdminRecordCounts((int)active, (int)expired) { Lifted = (int)lifted };
     }
 
     public bool AppliesHere(Ban ban) => ban.GlobalBan || ban.Server == _server.Guid;
@@ -327,13 +333,14 @@ public sealed partial class BansService : IBansManager, IDisposable
         return status switch
         {
             RecordStatus.Active => b => (b.ExpiresAt == 0 || b.ExpiresAt > now) && (b.Server == guid || b.GlobalBan == true),
-            RecordStatus.Expired => b => b.ExpiresAt != 0 && b.ExpiresAt <= now && (b.Server == guid || b.GlobalBan == true),
+            RecordStatus.Expired => b => b.ExpiresAt != 0 && b.ExpiresAt <= now && b.StoredStatus != PunishmentStatus.Lifted && (b.Server == guid || b.GlobalBan == true),
+            RecordStatus.Lifted => b => b.ExpiresAt != 0 && b.ExpiresAt <= now && b.StoredStatus == PunishmentStatus.Lifted && (b.Server == guid || b.GlobalBan == true),
             _ => b => b.Server == guid || b.GlobalBan == true,
         };
     }
 
     /// <summary>
-    /// Expires the given bans and raises <see cref="OnAdminBanRemoved"/>. Returns how many were lifted.
+    /// Marks the given bans lifted, ends them now and raises <see cref="OnAdminBanRemoved"/>. Returns how many were lifted.
     /// </summary>
     public async Task<int> LiftAsync(IReadOnlyList<Ban> bans)
     {
@@ -346,6 +353,7 @@ public sealed partial class BansService : IBansManager, IDisposable
             {
                 ban.ExpiresAt = now;
                 ban.UpdatedAt = now;
+                ban.StoredStatus = PunishmentStatus.Lifted;
                 await db.UpdateAsync(ban).ConfigureAwait(false);
             }
         }
@@ -358,6 +366,8 @@ public sealed partial class BansService : IBansManager, IDisposable
         return bans.Count;
     }
 
+    // Both scopes that apply here; the caller picks this server's or the global ones. An address finds every ban
+    // recorded with it, SteamID bans included, so an IP unban leaves nothing on the address in force.
     private async Task<IReadOnlyList<Ban>> FindApplicableActiveAsync(ulong? steamId64, string? ip)
     {
         var now = AdminsDatabase.NowMs;
@@ -375,17 +385,10 @@ public sealed partial class BansService : IBansManager, IDisposable
         {
             var address = Net.NormalizeIp(ip);
             var withPort = address + ":";
-            bans = _config.GlobalBansMatchIp
-                ? await db.SelectAsync<Ban>(b =>
-                    (b.BanType == BanType.IP || b.GlobalBan == true)
-                    && (b.PlayerIp == address || b.PlayerIp.StartsWith(withPort))
-                    && (b.ExpiresAt == 0 || b.ExpiresAt > now)
-                    && (b.Server == guid || b.GlobalBan == true)).ConfigureAwait(false)
-                : await db.SelectAsync<Ban>(b =>
-                    b.BanType == BanType.IP
-                    && (b.PlayerIp == address || b.PlayerIp.StartsWith(withPort))
-                    && (b.ExpiresAt == 0 || b.ExpiresAt > now)
-                    && (b.Server == guid || b.GlobalBan == true)).ConfigureAwait(false);
+            bans = await db.SelectAsync<Ban>(b =>
+                (b.PlayerIp == address || b.PlayerIp.StartsWith(withPort))
+                && (b.ExpiresAt == 0 || b.ExpiresAt > now)
+                && (b.Server == guid || b.GlobalBan == true)).ConfigureAwait(false);
         }
 
         return [.. bans];
@@ -412,7 +415,7 @@ public sealed partial class BansService : IBansManager, IDisposable
             _ => await db.GetAllAsync<Ban>().ConfigureAwait(false),
         };
 
-        return [.. bans.Where(b => (banType is null || b.BanType == banType) && StatusMatches(b.IsActive(now), status))];
+        return [.. bans.Where(b => (banType is null || b.BanType == banType) && AdminsDatabase.StatusIs(b.StatusAt(now), status))];
     }
 
     public async Task<IBan?> FindActiveBanAsync(long steamId64, string? playerIp)
@@ -420,11 +423,18 @@ public sealed partial class BansService : IBansManager, IDisposable
         if (!_database.Enabled) return null;
 
         var address = Net.NormalizeIp(playerIp);
-        var withPort = address + ":";
         var now = AdminsDatabase.NowMs;
         var guid = _server.Guid;
 
         using var db = _database.Connect();
+
+        // An excluded player is matched by their SteamID only.
+        if (address.Length > 0 && steamId64 != 0 && await db.CountAsync<IpBanExclusion>(e => e.SteamId64 == steamId64).ConfigureAwait(false) > 0)
+        {
+            address = string.Empty;
+        }
+
+        var withPort = address + ":";
         var bans = address.Length == 0
             ? await db.SelectAsync<Ban>(b =>
                 b.BanType == BanType.SteamID && b.SteamId64 == steamId64
@@ -515,13 +525,6 @@ public sealed partial class BansService : IBansManager, IDisposable
             _logger.LogError(ex, "A ban event handler threw.");
         }
     }
-
-    private static bool StatusMatches(bool active, RecordStatus status) => status switch
-    {
-        RecordStatus.Active => active,
-        RecordStatus.Expired => !active,
-        _ => true,
-    };
 
     public void Dispose()
     {

@@ -1,6 +1,7 @@
 using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
 using Admins.Contract;
+using Dommel;
 
 namespace Admins.Database.Models;
 
@@ -52,7 +53,17 @@ public sealed class Sanction : ISanction
     [Column("UpdatedAt")]
     public long UpdatedAt { get; set; }
 
+    /// <summary>As last written: a sanction that ran out reads Active here until the next sync marks it Expired.</summary>
+    [Column("Status")]
+    public PunishmentStatus StoredStatus { get; set; }
+
+    [Ignore]
+    public PunishmentStatus Status => StatusAt(AdminsDatabase.NowMs);
+
     public bool IsActive(long nowMs) => ExpiresAt == 0 || ExpiresAt > nowMs;
+
+    public PunishmentStatus StatusAt(long nowMs) =>
+        IsActive(nowMs) ? PunishmentStatus.Active : StoredStatus == PunishmentStatus.Lifted ? PunishmentStatus.Lifted : PunishmentStatus.Expired;
 
     public static Sanction From(ISanction source) => new Sanction
     {
@@ -71,5 +82,6 @@ public sealed class Sanction : ISanction
         GlobalSanction = source.GlobalSanction,
         CreatedAt = source.CreatedAt,
         UpdatedAt = source.UpdatedAt,
+        StoredStatus = source.Status,
     };
 }

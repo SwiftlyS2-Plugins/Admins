@@ -26,6 +26,19 @@ public enum CommsAction
     Silence,
 }
 
+/// <summary>Which of the punishments that apply here a lift reaches.</summary>
+public enum LiftScope
+{
+    /// <summary>This server's own.</summary>
+    Local,
+
+    /// <summary>The global ones.</summary>
+    Global,
+
+    /// <summary>Both.</summary>
+    Any,
+}
+
 public sealed partial class CommsService : ICommsManager, IDisposable
 {
     private readonly ISwiftlyCore _core;
@@ -121,6 +134,17 @@ public sealed partial class CommsService : ICommsManager, IDisposable
 
     public ISanction? GetActiveSanction(IPlayer player, SanctionKind kind) => GetActive(player, kind);
 
+    /// <summary>
+    /// Whether an online player has an active sanction of a kind, of this server or a global one. Game thread.
+    /// </summary>
+    public bool HasActive(IPlayer player, SanctionKind kind, bool global)
+    {
+        if (!_cache.TryGetValue(player.Slot, out var entry) || entry.SessionId != player.SessionId) return false;
+
+        var now = AdminsDatabase.NowMs;
+        return entry.Sanctions.Any(s => s.SanctionKind == kind && s.GlobalSanction == global && s.IsActive(now));
+    }
+
     [EventListener<EventDelegates.OnClientSteamAuthorize>]
     public void OnClientSteamAuthorize(IOnClientSteamAuthorizeEvent e)
     {
@@ -147,8 +171,30 @@ public sealed partial class CommsService : ICommsManager, IDisposable
         var interval = _config.DatabaseSyncIntervalSeconds;
         if (interval > 0)
         {
-            _syncTimer = _core.Scheduler.DelayAndRepeatBySeconds(interval, interval, LoadOnline);
+            _syncTimer = _core.Scheduler.DelayAndRepeatBySeconds(interval, interval, () =>
+            {
+                MarkExpired();
+                LoadOnline();
+            });
         }
+    }
+
+    private void MarkExpired()
+    {
+        if (!_database.Enabled) return;
+
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                using var db = _database.Connect();
+                await AdminsDatabase.MarkExpiredAsync<Sanction>(db, AdminsDatabase.NowMs).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to mark ended sanctions Expired.");
+            }
+        });
     }
 
     private void LoadOnline() => Load([.. _messenger.Humans().Where(p => p.IsAuthorized).Select(PlayerRef.Of)]);
@@ -429,7 +475,8 @@ public sealed partial class CommsService : ICommsManager, IDisposable
     }
 
     /// <summary>
-    /// Expires the given sanctions, drops them from the cache and raises <see cref="OnAdminSanctionRemoved"/>.
+    /// Marks the given sanctions lifted, ends them now, drops them from the cache and raises
+    /// <see cref="OnAdminSanctionRemoved"/>.
     /// </summary>
     public async Task<int> LiftAsync(IReadOnlyList<Sanction> sanctions)
     {
@@ -443,6 +490,7 @@ public sealed partial class CommsService : ICommsManager, IDisposable
             {
                 sanction.ExpiresAt = now;
                 sanction.UpdatedAt = now;
+                sanction.StoredStatus = PunishmentStatus.Lifted;
                 await db.UpdateAsync(sanction).ConfigureAwait(false);
             }
         }
@@ -478,7 +526,7 @@ public sealed partial class CommsService : ICommsManager, IDisposable
     }
 
     /// <summary>
-    /// How many sanctions that apply to this server are active, and how many have ended.
+    /// How many sanctions that apply to this server are active, how many ran out and how many were lifted.
     /// </summary>
     public async Task<AdminRecordCounts> CountSanctionsAsync(SanctionKind? sanctionKind = null)
     {
@@ -487,7 +535,8 @@ public sealed partial class CommsService : ICommsManager, IDisposable
         using var db = _database.Connect();
         var active = await db.CountAsync(Here(RecordStatus.Active, sanctionKind)).ConfigureAwait(false);
         var expired = await db.CountAsync(Here(RecordStatus.Expired, sanctionKind)).ConfigureAwait(false);
-        return new AdminRecordCounts((int)active, (int)expired);
+        var lifted = await db.CountAsync(Here(RecordStatus.Lifted, sanctionKind)).ConfigureAwait(false);
+        return new AdminRecordCounts((int)active, (int)expired) { Lifted = (int)lifted };
     }
 
     public bool AppliesHere(Sanction sanction) => sanction.GlobalSanction || sanction.Server == _server.Guid;
@@ -503,7 +552,8 @@ public sealed partial class CommsService : ICommsManager, IDisposable
             return status switch
             {
                 RecordStatus.Active => s => (s.ExpiresAt == 0 || s.ExpiresAt > now) && (s.Server == guid || s.GlobalSanction == true),
-                RecordStatus.Expired => s => s.ExpiresAt != 0 && s.ExpiresAt <= now && (s.Server == guid || s.GlobalSanction == true),
+                RecordStatus.Expired => s => s.ExpiresAt != 0 && s.ExpiresAt <= now && s.StoredStatus != PunishmentStatus.Lifted && (s.Server == guid || s.GlobalSanction == true),
+                RecordStatus.Lifted => s => s.ExpiresAt != 0 && s.ExpiresAt <= now && s.StoredStatus == PunishmentStatus.Lifted && (s.Server == guid || s.GlobalSanction == true),
                 _ => s => s.Server == guid || s.GlobalSanction == true,
             };
         }
@@ -511,12 +561,14 @@ public sealed partial class CommsService : ICommsManager, IDisposable
         return status switch
         {
             RecordStatus.Active => s => s.SanctionKind == k && (s.ExpiresAt == 0 || s.ExpiresAt > now) && (s.Server == guid || s.GlobalSanction == true),
-            RecordStatus.Expired => s => s.SanctionKind == k && s.ExpiresAt != 0 && s.ExpiresAt <= now && (s.Server == guid || s.GlobalSanction == true),
+            RecordStatus.Expired => s => s.SanctionKind == k && s.ExpiresAt != 0 && s.ExpiresAt <= now && s.StoredStatus != PunishmentStatus.Lifted && (s.Server == guid || s.GlobalSanction == true),
+            RecordStatus.Lifted => s => s.SanctionKind == k && s.ExpiresAt != 0 && s.ExpiresAt <= now && s.StoredStatus == PunishmentStatus.Lifted && (s.Server == guid || s.GlobalSanction == true),
             _ => s => s.SanctionKind == k && (s.Server == guid || s.GlobalSanction == true),
         };
     }
 
-    private async Task<IReadOnlyList<Sanction>> FindApplicableActiveAsync(IReadOnlyList<(ulong SteamId, string Ip)> subjects, IReadOnlyList<SanctionKind> kinds)
+    /// <param name="anyTypeOnIp">An address matches every sanction recorded with it, not only those given by IP.</param>
+    private async Task<IReadOnlyList<Sanction>> FindApplicableActiveAsync(IReadOnlyList<(ulong SteamId, string Ip)> subjects, IReadOnlyList<SanctionKind> kinds, bool anyTypeOnIp = false)
     {
         var steamIds = subjects.Select(s => (long)s.SteamId).Where(id => id != 0).Distinct().ToList();
         var ips = subjects.Select(s => s.Ip).Where(ip => ip.Length > 0).Distinct().ToList();
@@ -534,6 +586,12 @@ public sealed partial class CommsService : ICommsManager, IDisposable
                 && kindList.Contains(s.SanctionKind)
                 && (s.ExpiresAt == 0 || s.ExpiresAt > now)
                 && (s.Server == guid || s.GlobalSanction == true)).ConfigureAwait(false)
+            : steamIds.Count == 0 && anyTypeOnIp
+                ? await db.SelectAsync<Sanction>(s =>
+                    ips.Contains(s.PlayerIp)
+                    && kindList.Contains(s.SanctionKind)
+                    && (s.ExpiresAt == 0 || s.ExpiresAt > now)
+                    && (s.Server == guid || s.GlobalSanction == true)).ConfigureAwait(false)
             : steamIds.Count == 0
                 ? await db.SelectAsync<Sanction>(s =>
                     s.SanctionType == SanctionType.IP && ips.Contains(s.PlayerIp)
@@ -584,12 +642,7 @@ public sealed partial class CommsService : ICommsManager, IDisposable
             .. rows.Where(s =>
                 (sanctionKind is null || s.SanctionKind == sanctionKind)
                 && (sanctionType is null || s.SanctionType == sanctionType)
-                && status switch
-                {
-                    RecordStatus.Active => s.IsActive(now),
-                    RecordStatus.Expired => !s.IsActive(now),
-                    _ => true,
-                }),
+                && AdminsDatabase.StatusIs(s.StatusAt(now), status)),
         ];
     }
 

@@ -36,19 +36,45 @@ public enum ImmunityMode
 public enum RecordStatus
 {
     /// <summary>
-    /// Only active (not expired) records.
+    /// Only records in force.
     /// </summary>
     Active,
 
     /// <summary>
-    /// Only expired (inactive) records.
+    /// Only records that ran out, not those an admin lifted.
     /// </summary>
     Expired,
 
     /// <summary>
     /// All records regardless of status.
     /// </summary>
-    All
+    All,
+
+    /// <summary>
+    /// Only records an admin lifted before they ran out.
+    /// </summary>
+    Lifted,
+}
+
+/// <summary>
+/// Where a ban or a sanction stands.
+/// </summary>
+public enum PunishmentStatus
+{
+    /// <summary>
+    /// In force.
+    /// </summary>
+    Active = 0,
+
+    /// <summary>
+    /// An admin lifted it before it ran out: unbanned, ungagged or unmuted.
+    /// </summary>
+    Lifted = 1,
+
+    /// <summary>
+    /// It ran out.
+    /// </summary>
+    Expired = 2,
 }
 
 public enum BanType

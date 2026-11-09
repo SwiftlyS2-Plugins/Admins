@@ -46,13 +46,22 @@ public sealed partial class CommsService
     public void GlobalSilenceIpCommand(ICommandContext context) => HandleIssue(context, "globalsilenceip", CommsAction.Silence, SanctionType.IP, global: true);
 
     [Command("ungag", permission: "admins.commands.ungag")]
-    public void UngagCommand(ICommandContext context) => HandleLift(context, "ungag", CommsAction.Gag);
+    public void UngagCommand(ICommandContext context) => HandleLift(context, "ungag", CommsAction.Gag, global: false);
 
     [Command("unmute", permission: "admins.commands.unmute")]
-    public void UnmuteCommand(ICommandContext context) => HandleLift(context, "unmute", CommsAction.Mute);
+    public void UnmuteCommand(ICommandContext context) => HandleLift(context, "unmute", CommsAction.Mute, global: false);
 
     [Command("unsilence", permission: "admins.commands.unsilence")]
-    public void UnsilenceCommand(ICommandContext context) => HandleLift(context, "unsilence", CommsAction.Silence);
+    public void UnsilenceCommand(ICommandContext context) => HandleLift(context, "unsilence", CommsAction.Silence, global: false);
+
+    [Command("globalungag", permission: "admins.commands.globalungag")]
+    public void GlobalUngagCommand(ICommandContext context) => HandleLift(context, "globalungag", CommsAction.Gag, global: true);
+
+    [Command("globalunmute", permission: "admins.commands.globalunmute")]
+    public void GlobalUnmuteCommand(ICommandContext context) => HandleLift(context, "globalunmute", CommsAction.Mute, global: true);
+
+    [Command("globalunsilence", permission: "admins.commands.globalunsilence")]
+    public void GlobalUnsilenceCommand(ICommandContext context) => HandleLift(context, "globalunsilence", CommsAction.Silence, global: true);
 
     private void HandleIssue(ICommandContext context, string command, CommsAction action, SanctionType type, bool global)
     {
@@ -129,13 +138,14 @@ public sealed partial class CommsService
         SanctionOffline(issuer, known?.SteamID ?? 0, ip, action, SanctionType.IP, duration, reason, global, known is null ? null : Names.Of(known));
     }
 
-    // An address lifts IP rows on it. A player on the server lifts their SteamID rows and IP rows on their current
-    // address, a SteamID its rows, and otherwise a name the rows recorded under it. Rows from another server's local
-    // sanction are left alone.
-    private void HandleLift(ICommandContext context, string command, CommsAction action)
+    // The un commands lift this server's own sanctions and the globalun ones the global sanctions. An address lifts every
+    // sanction recorded with it; a player on the server, their SteamID's and those by IP on their address; a SteamID,
+    // its own; anything else, the sanctions recorded under that name.
+    private void HandleLift(ICommandContext context, string command, CommsAction action, bool global)
     {
         var issuer = Issuer.From(context);
         var query = string.Join(' ', context.Args).Trim();
+        var scope = global ? LiftScope.Global : LiftScope.Local;
 
         if (query.Length == 0)
         {
@@ -146,7 +156,7 @@ public sealed partial class CommsService
         if (Net.IsIp(query))
         {
             var ip = Net.NormalizeIp(query);
-            Lift(issuer, [(0, ip)], action, ip);
+            LiftFound(issuer, action, ip, scope, s => Net.NormalizeIp(s.PlayerIp) == ip, kinds => FindApplicableActiveAsync([(0, ip)], kinds, anyTypeOnIp: true));
             return;
         }
 
@@ -166,79 +176,59 @@ public sealed partial class CommsService
 
         if (player is not null)
         {
-            Lift(issuer, [(player.SteamID, Net.NormalizeIp(player.IPAddress))], action, Names.Of(player));
+            Lift(issuer, [(player.SteamID, Net.NormalizeIp(player.IPAddress))], action, Names.Of(player), scope);
         }
         else if (error == TargetError.None)
         {
-            Lift(issuer, [(steamId, string.Empty)], action, steamId.ToString());
+            Lift(issuer, [(steamId, string.Empty)], action, steamId.ToString(), scope);
         }
         else if (!_database.Enabled)
         {
-            Report(issuer, action, [], query);
+            Report(issuer, action, scope, [], query);
         }
         else
         {
-            LiftNamed(issuer, query, action);
+            LiftFound(issuer, action, query, scope, _ => false, async kinds =>
+            {
+                using var db = _database.Connect();
+                var active = await db.SelectAsync(Here(RecordStatus.Active, null)).ConfigureAwait(false);
+                return TargetResolver.Named(active.Where(s => kinds.Contains(s.SanctionKind)), query, s => s.PlayerName ?? string.Empty);
+            }, byName: true);
         }
     }
 
-    private void LiftNamed(Issuer issuer, string name, CommsAction action)
-    {
-        var kinds = KindsOf(action);
-
-        _ = Task.Run(async () =>
-        {
-            try
-            {
-                List<Sanction> rows;
-                using (var db = _database.Connect())
-                {
-                    var active = await db.SelectAsync(Here(RecordStatus.Active, null)).ConfigureAwait(false);
-                    rows = TargetResolver.Named(active.Where(s => kinds.Contains(s.SanctionKind)), name, s => s.PlayerName ?? string.Empty);
-                }
-
-                var players = rows.GroupBy(s => s.SteamId64 != 0 ? s.SteamId64.ToString() : Net.NormalizeIp(s.PlayerIp)).ToList();
-
-                if (players.Count > 1)
-                {
-                    var list = string.Join(", ", players.Take(5).Select(p => $"{p.First().PlayerName} ({p.Key})"));
-                    _messenger.ReplyLater(issuer, "command.multiple_records", name, list);
-                    return;
-                }
-
-                await LiftAsync(rows).ConfigureAwait(false);
-                var display = players.Count == 1 ? $"{rows[0].PlayerName} ({players[0].Key})" : name;
-                _core.Scheduler.NextTick(() =>
-                {
-                    if (_messenger.IsConnected(issuer)) Report(issuer, action, rows, display);
-                });
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Failed to lift sanctions for {Target}.", name);
-                _messenger.ReplyLater(issuer, "command.database_error");
-            }
-        });
-    }
-
     /// <summary>
-    /// Lifts the active sanctions of a kind for the given players. Game thread.
+    /// Lifts the active sanctions of a kind for the given players: this server's, the global ones or both. Game thread.
     /// </summary>
-    /// <param name="completed">Runs on the game thread once the lift succeeded; not on failure.</param>
-    public void Lift(Issuer issuer, IReadOnlyList<(ulong SteamId, string Ip)> subjects, CommsAction action, string display, Action? completed = null)
+    /// <param name="completed">Runs on the game thread once the lift went through; not on failure.</param>
+    public void Lift(Issuer issuer, IReadOnlyList<(ulong SteamId, string Ip)> subjects, CommsAction action, string display, LiftScope scope, Action? completed = null) =>
+        LiftFound(issuer, action, display, scope, s => subjects.Any(x => Matches(s, x.SteamId, x.Ip)), kinds => FindApplicableActiveAsync(subjects, kinds), completed: completed);
+
+    /// <param name="cached">Picks from memory what <paramref name="find"/> would, for when there is no database.</param>
+    /// <param name="find">The active sanctions of the kinds that apply here, of both scopes; those of the other scope only
+    /// steer the reply.</param>
+    private void LiftFound(
+        Issuer issuer,
+        CommsAction action,
+        string display,
+        LiftScope scope,
+        Func<Sanction, bool> cached,
+        Func<IReadOnlyList<SanctionKind>, Task<IReadOnlyList<Sanction>>> find,
+        bool byName = false,
+        Action? completed = null)
     {
         var kinds = KindsOf(action);
 
         if (!_database.Enabled)
         {
-            var cached = _cache.Values
+            var rows = _cache.Values
                 .SelectMany(e => e.Sanctions)
-                .Where(s => kinds.Contains(s.SanctionKind) && subjects.Any(x => Matches(s, x.SteamId, x.Ip)))
+                .Where(s => kinds.Contains(s.SanctionKind) && InScope(s, scope) && cached(s))
                 .Distinct()
                 .ToList();
 
-            Forget(cached);
-            Report(issuer, action, cached, display);
+            Forget(rows);
+            Report(issuer, action, scope, rows, display);
             completed?.Invoke();
             return;
         }
@@ -247,11 +237,34 @@ public sealed partial class CommsService
         {
             try
             {
-                var rows = await FindApplicableActiveAsync(subjects, kinds).ConfigureAwait(false);
+                var found = await find(kinds).ConfigureAwait(false);
+                var rows = found.Where(s => InScope(s, scope)).ToList();
+
+                if (byName)
+                {
+                    var players = rows.GroupBy(s => s.SteamId64 != 0 ? s.SteamId64.ToString() : Net.NormalizeIp(s.PlayerIp)).ToList();
+
+                    if (players.Count > 1)
+                    {
+                        var list = string.Join(", ", players.Take(5).Select(p => $"{p.First().PlayerName} ({p.Key})"));
+                        _messenger.ReplyLater(issuer, "command.multiple_records", display, list);
+                        return;
+                    }
+
+                    if (players.Count == 1) display = $"{rows[0].PlayerName} ({players[0].Key})";
+                }
+
+                var otherScopeOnly = rows.Count == 0 && found.Count > 0;
                 await LiftAsync(rows).ConfigureAwait(false);
+
                 _core.Scheduler.NextTick(() =>
                 {
-                    if (_messenger.IsConnected(issuer)) Report(issuer, action, rows, display);
+                    if (_messenger.IsConnected(issuer))
+                    {
+                        if (otherScopeOnly) ReportOtherScope(issuer, action, scope, display);
+                        else Report(issuer, action, scope, rows, display);
+                    }
+
                     completed?.Invoke();
                 });
             }
@@ -263,6 +276,13 @@ public sealed partial class CommsService
         });
     }
 
+    private static bool InScope(Sanction sanction, LiftScope scope) => scope switch
+    {
+        LiftScope.Local => !sanction.GlobalSanction,
+        LiftScope.Global => sanction.GlobalSanction,
+        _ => true,
+    };
+
     /// <summary>
     /// Lifts one sanction picked from the menu. <paramref name="completed"/> runs on the game thread afterwards.
     /// </summary>
@@ -270,6 +290,7 @@ public sealed partial class CommsService
     {
         var action = sanction.SanctionKind == SanctionKind.Gag ? CommsAction.Gag : CommsAction.Mute;
         var display = sanction.SanctionType == SanctionType.IP ? sanction.PlayerIp : sanction.SteamId64.ToString();
+        var scope = sanction.GlobalSanction ? LiftScope.Global : LiftScope.Local;
 
         _ = Task.Run(async () =>
         {
@@ -278,7 +299,7 @@ public sealed partial class CommsService
                 await LiftAsync([sanction]).ConfigureAwait(false);
                 _core.Scheduler.NextTick(() =>
                 {
-                    if (_messenger.IsConnected(issuer)) Report(issuer, action, [sanction], display);
+                    if (_messenger.IsConnected(issuer)) Report(issuer, action, scope, [sanction], display);
                 });
             }
             catch (Exception ex)
@@ -293,9 +314,9 @@ public sealed partial class CommsService
         });
     }
 
-    private void Report(Issuer issuer, CommsAction action, IReadOnlyList<Sanction> lifted, string display)
+    private void Report(Issuer issuer, CommsAction action, LiftScope scope, IReadOnlyList<Sanction> lifted, string display)
     {
-        var label = ActionLabel(issuer.Player, action, global: false);
+        var label = ActionLabel(issuer.Player, action, global: scope == LiftScope.Global);
 
         if (lifted.Count == 0)
         {
@@ -304,5 +325,14 @@ public sealed partial class CommsService
         }
 
         _messenger.Reply(issuer, "comms.lifted", issuer.Name, lifted.Count, label, display);
+    }
+
+    // Only the other scope's sanctions matched: names the command that lifts them.
+    private void ReportOtherScope(Issuer issuer, CommsAction action, LiftScope scope, string display)
+    {
+        var name = action.ToString().ToLowerInvariant();
+        var command = (issuer.Context?.Prefix ?? string.Empty) + (scope == LiftScope.Global ? "un" : "globalun") + name;
+        var key = scope == LiftScope.Global ? "comms.lift_only_local" : "comms.lift_only_global";
+        _messenger.Reply(issuer, key, display, ActionLabel(issuer.Player, action, global: false), command);
     }
 }

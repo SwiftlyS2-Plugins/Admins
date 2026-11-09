@@ -343,20 +343,23 @@ public sealed partial class AdminMenuService
         {
             var sanctionKind = kind == Punishment.Gag ? SanctionKind.Gag : SanctionKind.Mute;
             var canIssue = CanPunishAny(viewer, kind);
-            var canLift = CanLift(viewer, kind);
-            if (!canIssue && !canLift) continue;
+            var liftScope = LiftScopeOf(viewer, kind);
+            if (!canIssue && liftScope is null) continue;
 
             Sanction? Active(IPlayer? p) => p is null ? null : _comms.GetActive(p, sanctionKind);
 
             acts.Add(new Act(
                 kind == Punishment.Gag ? AdminPlayerAction.Gag : AdminPlayerAction.Mute,
                 p => Active(p) is { } active ? T(viewer, $"menu.punish.un{Key(kind)}", Remaining(viewer, active.ExpiresAt)) : T(viewer, $"menu.punish.{Key(kind)}"),
-                p => Active(p) is not null ? canLift && Human(p!) : canIssue && Issuable(p),
+                p => Active(p) is { } active ? CanLift(viewer, kind, active.GlobalSanction) && Human(p!) : canIssue && Issuable(p),
                 (p, session) =>
                 {
-                    if (Active(p) is null) return Issue(kind, p, session.Menu);
+                    if (Active(p) is not { } active) return Issue(kind, p, session.Menu);
 
-                    _comms.Lift(issuer, [(p!.SteamID, Net.NormalizeIp(p.IPAddress))], ActionOf(kind), Names.Of(p));
+                    // Shown before they were gagged or muted by someone else, the row can be picked by a viewer who cannot lift it.
+                    if (liftScope is not { } scope || !CanLift(viewer, kind, active.GlobalSanction)) return null;
+
+                    _comms.Lift(issuer, [(p!.SteamID, Net.NormalizeIp(p.IPAddress))], ActionOf(kind), Names.Of(p), scope);
                     return null;
                 }));
         }

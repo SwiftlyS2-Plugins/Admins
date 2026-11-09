@@ -22,10 +22,16 @@ public sealed partial class BansService
     public void GlobalBanIpCommand(ICommandContext context) => HandleBan(context, "globalbanip", BanType.IP, global: true);
 
     [Command("unban", permission: "admins.commands.unban")]
-    public void UnbanCommand(ICommandContext context) => HandleUnban(context, "unban", byIp: false);
+    public void UnbanCommand(ICommandContext context) => HandleUnban(context, "unban", byIp: false, global: false);
 
     [Command("unbanip", permission: "admins.commands.unban")]
-    public void UnbanIpCommand(ICommandContext context) => HandleUnban(context, "unbanip", byIp: true);
+    public void UnbanIpCommand(ICommandContext context) => HandleUnban(context, "unbanip", byIp: true, global: false);
+
+    [Command("globalunban", permission: "admins.commands.globalunban")]
+    public void GlobalUnbanCommand(ICommandContext context) => HandleUnban(context, "globalunban", byIp: false, global: true);
+
+    [Command("globalunbanip", permission: "admins.commands.globalunban")]
+    public void GlobalUnbanIpCommand(ICommandContext context) => HandleUnban(context, "globalunbanip", byIp: true, global: true);
 
     private void HandleBan(ICommandContext context, string command, BanType type, bool global)
     {
@@ -92,7 +98,7 @@ public sealed partial class BansService
         }
 
         var ip = Net.NormalizeIp(address);
-        var players = _targets.OnIp(ip);
+        var players = _targets.OnIp(ip).Where(p => !_ipBanExcluded.Contains(p.SteamID)).ToList();
 
         if (players.FirstOrDefault(p => !_access.CanTarget(issuer.Player, p.SteamID)) is { } immune)
         {
@@ -104,8 +110,9 @@ public sealed partial class BansService
         BanOffline(issuer, known?.SteamID ?? 0, ip, BanType.IP, duration, reason, global, known is null ? null : Names.Of(known));
     }
 
-    // Lifts only bans that apply here; another server's local ban is not this server's to remove.
-    private void HandleUnban(ICommandContext context, string command, bool byIp)
+    // unban lifts this server's own bans and globalunban the global ones, as ban and globalban gave them. Another
+    // server's local ban is not this server's to lift.
+    private void HandleUnban(ICommandContext context, string command, bool byIp, bool global)
     {
         var issuer = Issuer.From(context);
         var query = string.Join(' ', context.Args).Trim();
@@ -131,7 +138,7 @@ public sealed partial class BansService
             }
 
             var ip = Net.NormalizeIp(query);
-            UnbanFound(issuer, ip, () => FindApplicableActiveAsync(null, ip));
+            UnbanFound(issuer, ip, global, () => FindApplicableActiveAsync(null, ip));
             return;
         }
 
@@ -152,25 +159,27 @@ public sealed partial class BansService
         if (player is not null || error == TargetError.None)
         {
             var id = player?.SteamID ?? steamId;
-            UnbanFound(issuer, player is null ? id.ToString() : Names.Of(player), () => FindApplicableActiveAsync(id, null));
+            UnbanFound(issuer, player is null ? id.ToString() : Names.Of(player), global, () => FindApplicableActiveAsync(id, null));
             return;
         }
 
         // Nobody on the server: whoever was banned under that name.
-        UnbanFound(issuer, query, async () =>
+        UnbanFound(issuer, query, global, async () =>
         {
             using var db = _database.Connect();
             return TargetResolver.Named(await db.SelectAsync(Here(RecordStatus.Active)).ConfigureAwait(false), query, b => b.PlayerName ?? string.Empty);
         }, byName: true);
     }
 
-    private void UnbanFound(Issuer issuer, string display, Func<Task<IReadOnlyList<Ban>>> find, bool byName = false)
+    /// <param name="find">The active bans that apply here, of both scopes; those of the other one only steer the reply.</param>
+    private void UnbanFound(Issuer issuer, string display, bool global, Func<Task<IReadOnlyList<Ban>>> find, bool byName = false)
     {
         _ = Task.Run(async () =>
         {
             try
             {
-                var bans = await find().ConfigureAwait(false);
+                var found = await find().ConfigureAwait(false);
+                var bans = found.Where(b => b.GlobalBan == global).ToList();
 
                 if (byName)
                 {
@@ -186,8 +195,15 @@ public sealed partial class BansService
                     if (players.Count == 1) display = $"{bans[0].PlayerName} ({players[0].Key})";
                 }
 
+                if (bans.Count == 0 && found.Count > 0)
+                {
+                    var other = global ? "unban" : "globalunban";
+                    _messenger.ReplyLater(issuer, global ? "ban.unban_only_local" : "ban.unban_only_global", display, (issuer.Context?.Prefix ?? string.Empty) + other);
+                    return;
+                }
+
                 var lifted = await LiftAsync(bans).ConfigureAwait(false);
-                _messenger.ReplyLater(issuer, lifted > 0 ? "ban.unban_success" : "ban.unban_none", issuer.Name, lifted, display);
+                _messenger.ReplyLater(issuer, UnbanKey(lifted, global), issuer.Name, lifted, display);
             }
             catch (Exception ex)
             {
@@ -196,6 +212,9 @@ public sealed partial class BansService
             }
         });
     }
+
+    private static string UnbanKey(int lifted, bool global) =>
+        lifted == 0 ? global ? "ban.unban_none_global" : "ban.unban_none" : global ? "ban.unban_success_global" : "ban.unban_success";
 
     /// <summary>
     /// Lifts one ban picked from the menu. <paramref name="completed"/> runs on the game thread afterwards.
@@ -208,7 +227,7 @@ public sealed partial class BansService
             {
                 var lifted = await LiftAsync([ban]).ConfigureAwait(false);
                 var display = ban.BanType == BanType.IP ? ban.PlayerIp : ban.SteamId64.ToString();
-                _messenger.ReplyLater(issuer, lifted > 0 ? "ban.unban_success" : "ban.unban_none", issuer.Name, lifted, display);
+                _messenger.ReplyLater(issuer, UnbanKey(lifted, ban.GlobalBan), issuer.Name, lifted, display);
             }
             catch (Exception ex)
             {

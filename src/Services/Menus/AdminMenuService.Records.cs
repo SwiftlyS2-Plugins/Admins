@@ -13,8 +13,8 @@ public sealed partial class AdminMenuService
 {
     private const int ListLimit = 100;
 
-    // All first: the header counts both, so a list opening on active ones looks like it lost the rest.
-    private static readonly RecordStatus[] StatusFilters = [RecordStatus.All, RecordStatus.Active, RecordStatus.Expired];
+    // All first: the header counts every status, so a list opening on active ones looks like it lost the rest.
+    private static readonly RecordStatus[] StatusFilters = [RecordStatus.All, RecordStatus.Active, RecordStatus.Expired, RecordStatus.Lifted];
     private static readonly SanctionKind?[] KindFilters = [null, SanctionKind.Gag, SanctionKind.Mute];
 
     /// <summary>A ban or sanction the way the menu shows it.</summary>
@@ -31,7 +31,8 @@ public sealed partial class AdminMenuService
         long CreatedAt,
         long Length,
         long ExpiresAt,
-        bool Global);
+        bool Global,
+        PunishmentStatus Status);
 
     private sealed class ListView : IAdminRecordList
     {
@@ -54,12 +55,14 @@ public sealed partial class AdminMenuService
 
         public int Expired { get; set; } = -1;
 
-        public AdminRecordCounts? Counts => Active < 0 ? null : new AdminRecordCounts(Active, Expired);
+        public int Lifted { get; set; } = -1;
+
+        public AdminRecordCounts? Counts => Active < 0 ? null : new AdminRecordCounts(Active, Expired) { Lifted = Lifted };
     }
 
-    private bool BanListAvailable(IPlayer viewer) => CanLift(viewer, Punishment.Ban) || CanPunishAny(viewer, Punishment.Ban);
+    private bool BanListAvailable(IPlayer viewer) => CanLiftAny(viewer, Punishment.Ban) || CanPunishAny(viewer, Punishment.Ban);
 
-    private bool CommsListAvailable(IPlayer viewer) => CommsKinds.Any(k => CanLift(viewer, k) || CanPunishAny(viewer, k));
+    private bool CommsListAvailable(IPlayer viewer) => CommsKinds.Any(k => CanLiftAny(viewer, k) || CanPunishAny(viewer, k));
 
     private IMenu BansPage(IPlayer viewer)
     {
@@ -73,8 +76,7 @@ public sealed partial class AdminMenuService
         return RecordsPage(viewer, AdminMenuIds.Bans, T(viewer, "menu.bans.title"), kinds: false, give, async (status, _) =>
         {
             var bans = await _bans.ListAsync(status, ListLimit).ConfigureAwait(false);
-            var (active, expired) = await _bans.CountBansAsync().ConfigureAwait(false);
-            return (bans.Cast<object>().ToList(), active, expired);
+            return (bans.Cast<object>().ToList(), await _bans.CountBansAsync().ConfigureAwait(false));
         });
     }
 
@@ -93,8 +95,7 @@ public sealed partial class AdminMenuService
         return RecordsPage(viewer, AdminMenuIds.Comms, T(viewer, "menu.comms.title"), kinds: true, give, async (status, kind) =>
         {
             var sanctions = await _comms.ListAsync(status, kind, ListLimit).ConfigureAwait(false);
-            var (active, expired) = await _comms.CountSanctionsAsync(kind).ConfigureAwait(false);
-            return (sanctions.Cast<object>().ToList(), active, expired);
+            return (sanctions.Cast<object>().ToList(), await _comms.CountSanctionsAsync(kind).ConfigureAwait(false));
         });
     }
 
@@ -109,7 +110,7 @@ public sealed partial class AdminMenuService
         string title,
         bool kinds,
         Func<Func<IMenu>, IMenuComponent>? give,
-        Func<RecordStatus, SanctionKind?, Task<(IReadOnlyList<object> Records, int Active, int Expired)>> load)
+        Func<RecordStatus, SanctionKind?, Task<(IReadOnlyList<object> Records, AdminRecordCounts Counts)>> load)
     {
         var (builder, page) = NewPage(id, title);
         var view = new ListView { Comms = kinds };
@@ -130,7 +131,7 @@ public sealed partial class AdminMenuService
             session.Invalidate();
         })
         {
-            TextProvider = _ => T(viewer, $"menu.list.show_{view.Status.ToString().ToLowerInvariant()}", CountLabel(view)),
+            TextProvider = _ => T(viewer, StatusFilterKey(view), CountLabel(view)),
             Tag = new AdminActionRow(AdminAction.StatusFilter),
         });
         page.RowsAt++;
@@ -140,7 +141,7 @@ public sealed partial class AdminMenuService
             builder.Add(new Row(string.Empty, session =>
             {
                 view.Kind = Next(KindFilters, view.Kind);
-                view.Active = view.Expired = -1;
+                view.Active = view.Expired = view.Lifted = -1;
                 Reload(fresh: true);
                 session.Invalidate();
             })
@@ -179,7 +180,7 @@ public sealed partial class AdminMenuService
 
             _ = Task.Run(async () =>
             {
-                (IReadOnlyList<object> Records, int Active, int Expired)? loaded = null;
+                (IReadOnlyList<object> Records, AdminRecordCounts Counts)? loaded = null;
                 try
                 {
                     loaded = await load(status, kind).ConfigureAwait(false);
@@ -197,8 +198,9 @@ public sealed partial class AdminMenuService
                     view.Failed = loaded is null;
                     if (loaded is not { } result) return;
 
-                    view.Active = result.Active;
-                    view.Expired = result.Expired;
+                    view.Active = result.Counts.Active;
+                    view.Expired = result.Counts.Expired;
+                    view.Lifted = result.Counts.Lifted;
                     view.Shown = result.Records.Count;
                     ShowRows(self, page, [.. result.Records.Select(record => ListRow(viewer, record, self, () => Reload(fresh: false)))]);
                 });
@@ -225,8 +227,13 @@ public sealed partial class AdminMenuService
             {
                 RecordStatus.Active => view.Active,
                 RecordStatus.Expired => view.Expired,
-                _ => view.Active + view.Expired,
+                RecordStatus.Lifted => view.Lifted,
+                _ => view.Active + view.Expired + view.Lifted,
             }).ToString();
+
+    // Lifted gags and mutes are not "unbanned".
+    private static string StatusFilterKey(ListView view) =>
+        view.Status == RecordStatus.Lifted && view.Comms ? "menu.list.show_lifted_comms" : $"menu.list.show_{view.Status.ToString().ToLowerInvariant()}";
 
     private static T Next<T>(T[] cycle, T current) => cycle[(Array.IndexOf(cycle, current) + 1) % cycle.Length];
 
@@ -245,7 +252,8 @@ public sealed partial class AdminMenuService
             ban.CreatedAt,
             ban.Length,
             ban.ExpiresAt,
-            ban.GlobalBan),
+            ban.GlobalBan,
+            ban.Status),
         Sanction sanction => new(
             KindOf(sanction.SanctionKind),
             sanction.Id,
@@ -259,7 +267,8 @@ public sealed partial class AdminMenuService
             sanction.CreatedAt,
             sanction.Length,
             sanction.ExpiresAt,
-            sanction.GlobalSanction),
+            sanction.GlobalSanction,
+            sanction.Status),
         _ => throw new ArgumentException("Not a ban or a sanction.", nameof(record)),
     };
 
@@ -280,8 +289,8 @@ public sealed partial class AdminMenuService
         return new Link(string.Empty, _ => RecordPage(viewer, record, list, reload, fromPlayer: false))
         {
             TextProvider = _ => r.Kind == Punishment.Ban
-                ? T(viewer, "menu.bans.row", r.Id, Name(r), Remaining(viewer, r.ExpiresAt))
-                : T(viewer, "menu.comms.row", r.Id, Name(r), KindName(viewer, r.Kind), Remaining(viewer, r.ExpiresAt)),
+                ? T(viewer, "menu.bans.row", r.Id, Name(r), Remaining(viewer, r))
+                : T(viewer, "menu.comms.row", r.Id, Name(r), KindName(viewer, r.Kind), Remaining(viewer, r)),
             Tag = RecordRowOf(record),
         };
     }
@@ -310,9 +319,9 @@ public sealed partial class AdminMenuService
 
         builder.Add(new Row(T(viewer, "menu.record.summary"), _ => SummarizeRecord(viewer, r)) { Tag = new AdminActionRow(AdminAction.Summary) });
 
-        if (CanLift(viewer, r.Kind))
+        if (CanLift(viewer, r.Kind, r.Global))
         {
-            builder.Add(new Row(T(viewer, r.Kind == Punishment.Ban ? "menu.record.unban" : $"menu.record.remove_{Key(r.Kind)}"), _ =>
+            builder.Add(new Row(T(viewer, $"menu.record.lift_{Key(r.Kind)}"), _ =>
             {
                 if (record is Ban ban) LiftBan(viewer, ban, reload);
                 else LiftSanction(viewer, (Sanction)record, reload);
@@ -326,7 +335,7 @@ public sealed partial class AdminMenuService
             });
         }
 
-        if (CanLift(viewer, r.Kind) && CanPunish(viewer, r.Kind, r.Global))
+        if (CanLift(viewer, r.Kind, r.Global) && CanPunish(viewer, r.Kind, r.Global))
         {
             var target = new PlayerRef(-1, 0, (ulong)Math.Max(0, r.SteamId64), r.Name, r.Ip);
             builder.Add(new Link(T(viewer, "menu.record.change_length"), _ => LengthPage(viewer, LengthDraft(r.Kind, target, record, r.Global, land)))
@@ -350,8 +359,17 @@ public sealed partial class AdminMenuService
         return menu;
     }
 
-    private string Ends(IPlayer viewer, long expiresAt)
+    // A lift ends the record at the moment it was lifted.
+    private string Remaining(IPlayer viewer, RecordView record) =>
+        record.Status == PunishmentStatus.Lifted
+            ? T(viewer, $"menu.time.lifted_{Key(record.Kind)}", Durations.Format(TimeSpan.FromMilliseconds(Math.Max(0, AdminsDatabase.NowMs - record.ExpiresAt))))
+            : Remaining(viewer, record.ExpiresAt);
+
+    private string Ends(IPlayer viewer, RecordView record)
     {
+        if (record.Status == PunishmentStatus.Lifted) return T(viewer, $"menu.record.lifted_{Key(record.Kind)}", _messenger.Timestamp(viewer, record.ExpiresAt));
+
+        var expiresAt = record.ExpiresAt;
         if (expiresAt == 0) return T(viewer, "menu.record.permanent");
 
         var now = AdminsDatabase.NowMs;
@@ -363,7 +381,7 @@ public sealed partial class AdminMenuService
     private void SummarizeRecord(IPlayer viewer, RecordView record)
     {
         _messenger.Chat(viewer, "menu.summary.record", KindName(viewer, record.Kind), record.Id, record.Subject, ReasonText(viewer, record.Reason), record.Admin, Scope(viewer, record.Global));
-        _messenger.Chat(viewer, "menu.summary.record_time", _messenger.Timestamp(viewer, record.CreatedAt), Readable(viewer, TimeSpan.FromMilliseconds(record.Length)), Ends(viewer, record.ExpiresAt));
+        _messenger.Chat(viewer, "menu.summary.record_time", _messenger.Timestamp(viewer, record.CreatedAt), Readable(viewer, TimeSpan.FromMilliseconds(record.Length)), Ends(viewer, record));
     }
 
     // The list was loaded a while ago; lifting a record that has since ended would rewrite when it ended.

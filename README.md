@@ -60,7 +60,7 @@ One plugin for everything admin related. It replaces `Admins.Core`, `Admins.Bans
 | Config | `addons/swiftlys2/configs/plugins/Admins/config.jsonc` |
 | Server GUID | `addons/swiftlys2/data/Admins/server_id.txt` |
 | Translations | `addons/swiftlys2/plugins/Admins/resources/translations/` |
-| Tables | `admins`, `groups`, `servers`, `bans`, `sanctions`, `player_sessions` and the migration ledger `VersionInfo` |
+| Tables | `admins`, `groups`, `servers`, `bans`, `sanctions`, `ip_ban_exclusions`, `player_sessions` and the migration ledger `VersionInfo` |
 
 Keep `server_id.txt` when you reinstall. Admins, groups, bans and gags are tied to the server by that GUID, and a new one detaches the server from all of them.
 
@@ -87,7 +87,7 @@ Plugins built against the old `V1` interfaces need updating, see [API Integratio
 | `Bans.Reasons` | list | Reasons the menu offers for a ban |
 | `Bans.DurationsInSeconds` | `[1800, 3600, 21600, 86400, 604800, 2592000, 0]` | Lengths the menu offers for a ban. `0` = permanent |
 | `Bans.KickOnSteamAuthorizationFailure` | `true` | Kick players Steam cannot authorize. `false` lets them in during Steam outages, but their bans and admin rights go unchecked until they authorize |
-| `Bans.GlobalBansMatchIp` | `true` | A global ban also blocks the IP address the player had when banned, on every server, and so anyone else connecting from it, admins included. A SteamID banned while not on the server has no address. Applies to existing global bans too |
+| `Bans.GlobalBansMatchIp` | `true` | A global ban also blocks the IP address the player had when banned, on every server, and so anyone else connecting from it, admins included, except SteamIDs excluded with `!excludeipban`. A SteamID banned while not on the server has no address. Applies to existing global bans too |
 | `Comms.DatabaseSyncIntervalSeconds` | `30` | How often online players' gags and mutes are reloaded. `0` = off |
 | `Comms.Reasons` | list | Reasons the menu offers for a gag or mute |
 | `Comms.DurationsInSeconds` | as `Bans` | Lengths the menu offers for a gag or mute |
@@ -136,16 +136,16 @@ Admin Menu                  !admin
 │     ├─ Move and edit      go to, bring, rename, health, money
 │     ├─ History (n)        their bans, gags and mutes on every server
 │     └─ Sessions           their time played, IP addresses and connections on every server
-├─ Bans                     Show: All, Active or Expired
+├─ Bans                     Show: All, Active, Expired or Unbanned
 │  ├─ Give ban
-│  └─ <ban>                 summary, remove, change length, their player page
-├─ Comms                    the same for gags and mutes, with Type: All, Gags or Mutes
+│  └─ <ban>                 summary, unban, change length, their player page
+├─ Comms                    the same for gags and mutes, Unbanned there reading Lifted, with Type: All, Gags or Mutes
 ├─ My tools                 ESP, hide, noclip, god mode, respawn me
 ├─ Server                   restart round, remove dropped weapons, change map
 └─ <other plugins' entries>
 ```
 
-Bans and Comms list the punishments that apply to this server, ended and removed ones included, and need the database. A player's page offers only what applies right now, such as respawn while they are dead; once they leave, it keeps ban, gag, mute and silence, which then act on their SteamID. A bot has no SteamID, so on its page those four open the punishment's player list instead. Remove and change length are offered for active punishments of this server.
+Bans and Comms list the punishments that apply to this server, ended and lifted ones included, and need the database. A player's page offers only what applies right now, such as respawn while they are dead; once they leave, it keeps ban, gag, mute and silence, which then act on their SteamID. A bot has no SteamID, so on its page those four open the punishment's player list instead. Unban, ungag or unmute and change length are offered for active punishments that apply here, a global one to admins with the global form of the permission.
 
 ### Giving a punishment
 
@@ -220,7 +220,11 @@ Bans, gags, mutes and silences take one player, never a group:
 - A SteamID that is not on the server is punished offline, by SteamID alone, under the name of their latest session when one is kept. So a player who left is still reached.
 - A bot, or a player Steam has not authorized yet, has no SteamID to punish.
 
-`!unban`, `!ungag`, `!unmute` and `!unsilence` take a player on the server, a SteamID or an IP address, or else the name a punishment was recorded under. A name that more than one punished player had asks for their SteamID. They lift what applies to this server: its own punishments and global ones.
+`!unban`, `!ungag`, `!unmute` and `!unsilence` take a player on the server, a SteamID or an IP address, or else the name a punishment was recorded under. A name that more than one punished player had asks for their SteamID. They lift this server's own punishments, and their `global` forms the global ones, as `!ban` and `!globalban` gave them. When only the other kind matches, the reply names the command that lifts it.
+
+An IP address lifts every punishment recorded with that address, those given by SteamID included, so everyone banned from it can join again.
+
+Nothing is deleted. A punishment is **Active** until it runs out, then **Expired**; lifting it marks it **Unbanned** (ungagged, unmuted) and ends it at that moment. Whether one is in force is decided by its end time; the stored `Status` catches up on each `DatabaseSyncIntervalSeconds`.
 
 ### Admin Management
 
@@ -241,10 +245,14 @@ The last three keep their singular `admins.command.` prefix, so `admins.commands
 | `!globalban` | `<player\|steamid64\|ip> <time> <reason>` | `admins.commands.globalban` | Ban on every server, by SteamID and, with `Bans.GlobalBansMatchIp`, the IP address the player is connected from. |
 | `!banip` | `<ip> <time> <reason>` | `admins.commands.ban` | Ban by IP address. |
 | `!globalbanip` | `<ip> <time> <reason>` | `admins.commands.globalban` | Ban by IP address on every server. |
-| `!unban` | `<player\|steamid64\|ip>` | `admins.commands.unban` | Lift the active bans that apply to this server, its own and global ones. |
-| `!unbanip` | `<ip>` | `admins.commands.unban` | Lift the active bans of an IP address that apply to this server. |
+| `!unban` | `<player\|steamid64\|ip>` | `admins.commands.unban` | Lift this server's active bans. |
+| `!unbanip` | `<ip>` | `admins.commands.unban` | Lift this server's active bans recorded with an IP address. |
+| `!globalunban` | `<player\|steamid64\|ip>` | `admins.commands.globalunban` | Lift the active global bans. |
+| `!globalunbanip` | `<ip>` | `admins.commands.globalunban` | Lift the active global bans recorded with an IP address. |
+| `!excludeipban` | `[player\|steamid64]` | `admins.commands.excludeipban` | Let a SteamID past IP bans, for players who share an address. Without arguments, lists the exclusions. |
+| `!unexcludeipban` | `<player\|steamid64>` | `admins.commands.excludeipban` | Take the exclusion away again. |
 
-An IP address lifts the bans of that address and, with `Bans.GlobalBansMatchIp`, the global bans recorded with it, which unbans those players too.
+An excluded SteamID is held only by bans on its own SteamID, on every server: a ban that reaches it only through its address, by IP or a global ban's `GlobalBansMatchIp`, lets it in, and `!banip` neither kicks it nor counts its immunity. Gags and mutes are not affected.
 
 ### Gags & Mutes
 
@@ -260,11 +268,14 @@ A **gag** blocks text chat, a **mute** blocks voice chat and a **silence** does 
 | `!globalsilence` | `<player\|steamid64\|ip> <time> <reason>` | `admins.commands.globalsilence` | Block both on every server. |
 | `!gagip`, `!muteip`, `!silenceip` | `<ip> <time> <reason>` | `admins.commands.gag`, `.mute`, `.silence` | The same, by IP address. |
 | `!globalgagip`, `!globalmuteip`, `!globalsilenceip` | `<ip> <time> <reason>` | `admins.commands.globalgag`, `.globalmute`, `.globalsilence` | The same, by IP address on every server. |
-| `!ungag` | `<player\|steamid64\|ip>` | `admins.commands.ungag` | Lift the active gags that apply to this server. |
-| `!unmute` | `<player\|steamid64\|ip>` | `admins.commands.unmute` | Lift the active mutes that apply to this server. |
+| `!ungag` | `<player\|steamid64\|ip>` | `admins.commands.ungag` | Lift this server's active gags. |
+| `!unmute` | `<player\|steamid64\|ip>` | `admins.commands.unmute` | Lift this server's active mutes. |
 | `!unsilence` | `<player\|steamid64\|ip>` | `admins.commands.unsilence` | Lift both. |
+| `!globalungag` | `<player\|steamid64\|ip>` | `admins.commands.globalungag` | Lift the active global gags. |
+| `!globalunmute` | `<player\|steamid64\|ip>` | `admins.commands.globalunmute` | Lift the active global mutes. |
+| `!globalunsilence` | `<player\|steamid64\|ip>` | `admins.commands.globalunsilence` | Lift both. |
 
-Gags and mutes given by SteamID match only the SteamID, global ones included. A player on the server is ungagged or unmuted by SteamID and by the IP address they are on; an IP address lifts the gags and mutes of that address.
+Gags and mutes given by SteamID match only the SteamID, global ones included. A player on the server is ungagged or unmuted by SteamID and by the IP address they are on; an IP address lifts every gag and mute recorded with that address.
 
 ### Sessions
 

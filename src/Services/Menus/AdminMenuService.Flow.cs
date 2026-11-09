@@ -1,6 +1,7 @@
 using Admins.Contract;
 using Admins.Database;
 using Admins.Database.Models;
+using Admins.Services.Comms;
 using Admins.Shared;
 using Microsoft.Extensions.Logging;
 using SwiftlyS2.Shared.Menu;
@@ -619,7 +620,8 @@ public sealed partial class AdminMenuService
         }
 
         // By IP it reaches everyone connected from the address, as the ip commands do, so each of them has to be targetable.
-        if (draft.ByIp && target.Ip.Length > 0 && _targets.OnIp(target.Ip).FirstOrDefault(p => !_access.CanTarget(viewer, p.SteamID)) is { } shielded)
+        if (draft.ByIp && target.Ip.Length > 0
+            && _targets.OnIp(target.Ip).FirstOrDefault(p => !(kind == Punishment.Ban && _bans.IsIpBanExcluded(p.SteamID)) && !_access.CanTarget(viewer, p.SteamID)) is { } shielded)
         {
             _messenger.Chat(viewer, "command.target_has_immunity", Names.Of(shielded), _access.GetImmunity(shielded.SteamID));
             return;
@@ -644,10 +646,10 @@ public sealed partial class AdminMenuService
             else _comms.SanctionOffline(issuer, target.SteamId, target.Ip, ActionOf(kind), sanctionType, draft.Length, text, draft.Global, target.Name);
         }
 
-        // A gag or mute already on them is replaced rather than stacked.
-        if (kind != Punishment.Ban && Live(target) is { } player && Covered(kind).Any(k => _comms.GetActive(player, k) is not null))
+        // A gag or mute of the same scope already on them is replaced rather than stacked.
+        if (kind != Punishment.Ban && Live(target) is { } player && Covered(kind).Any(k => _comms.HasActive(player, k, draft.Global)))
         {
-            _comms.Lift(issuer, [(player.SteamID, target.Ip)], ActionOf(kind), Name(draft), completed: Execute);
+            _comms.Lift(issuer, [(player.SteamID, target.Ip)], ActionOf(kind), Name(draft), draft.Global ? LiftScope.Global : LiftScope.Local, completed: Execute);
         }
         else
         {
@@ -659,7 +661,7 @@ public sealed partial class AdminMenuService
     }
 
     private bool Allowed(IPlayer viewer, Draft draft) =>
-        CanPunish(viewer, draft.Kind, draft.Global) && (draft.Record is null || CanLift(viewer, draft.Kind));
+        CanPunish(viewer, draft.Kind, draft.Global) && (draft.Record is null || CanLift(viewer, draft.Kind, draft.Global));
 
     private static SanctionKind[] Covered(Punishment kind) => kind switch
     {
