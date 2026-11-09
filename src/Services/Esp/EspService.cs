@@ -4,7 +4,6 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using SwiftlyS2.Shared;
 using SwiftlyS2.Shared.Commands;
-using SwiftlyS2.Shared.EntitySystem;
 using SwiftlyS2.Shared.Events;
 using SwiftlyS2.Shared.Natives;
 using SwiftlyS2.Shared.Players;
@@ -16,9 +15,12 @@ namespace Admins.Services.Esp;
 public sealed class EspService : IDisposable
 {
     private const string Permission = "admins.commands.esp";
+    // Outside admins.commands.* on purpose: outlines while alive are a wallhack in play.
+    private const string AlivePermission = "admins.esp.alive";
     private const int ReconcileTicks = 8;
     private const int MapStartPauseTicks = 192;
     private const uint BoneMerge = 256;
+    private const uint InStagingList = 1 << 2;
     private const uint NoEntity = uint.MaxValue;
 
     private static readonly Color TColor = Color.FromBuiltin(System.Drawing.Color.Red);
@@ -94,7 +96,7 @@ public sealed class EspService : IDisposable
         else
         {
             _viewers[player.Slot] = player.SessionId;
-            _messenger.Reply(issuer, _config.CurrentValue.Esp.AllowWhileAlive ? "esp.enabled" : "esp.enabled_dead");
+            _messenger.Reply(issuer, SeesWhileAlive(player) ? "esp.enabled" : "esp.enabled_dead");
         }
 
         _ticks = ReconcileTicks;
@@ -189,7 +191,6 @@ public sealed class EspService : IDisposable
 
     private void Reconcile()
     {
-        var allowAlive = _config.CurrentValue.Esp.AllowWhileAlive;
         var seeing = new List<(int Slot, uint Observed)>();
 
         foreach (var (slot, sessionId) in _viewers.ToList())
@@ -200,7 +201,7 @@ public sealed class EspService : IDisposable
                 continue;
             }
 
-            if (allowAlive || !IsAlive(viewer)) seeing.Add((slot, ObservedInEye(viewer)));
+            if (!IsAlive(viewer) || SeesWhileAlive(viewer)) seeing.Add((slot, ObservedInEye(viewer)));
         }
 
         _seeing = seeing;
@@ -302,12 +303,13 @@ public sealed class EspService : IDisposable
         }
     }
 
-    // The model goes in through the spawn keyvalues: SetModel on a skeletal model before spawning asserts in the engine.
+    // A prop_dynamic given its model through spawn keyvalues drew no outline. SetModel on a skeletal model asserts while
+    // the entity is staged, hence clearing EF_IN_STAGING_LIST first.
     private static void Spawn(CDynamicProp prop, string model)
     {
-        using var kv = new CEntityKeyValues();
-        kv.SetString("model", model);
-        prop.DispatchSpawn(kv);
+        prop.Entity!.Flags &= ~InStagingList;
+        prop.SetModel(model);
+        prop.DispatchSpawn();
     }
 
     private void SetVisible(int targetSlot, Glow glow, bool alive)
@@ -359,6 +361,9 @@ public sealed class EspService : IDisposable
 
     private static bool IsAlive(IPlayer player) =>
         player.PlayerPawn is { IsValid: true } pawn && pawn.LifeState == (byte)LifeState_t.LIFE_ALIVE;
+
+    private bool SeesWhileAlive(IPlayer viewer) =>
+        _config.CurrentValue.Esp.AllowWhileAlive || _core.Permission.PlayerHasPermission(viewer.SteamID, AlivePermission);
 
     private static Target? TargetOf(IPlayer player)
     {

@@ -1,6 +1,7 @@
 using Admins.Contract;
 using Admins.Database.Models;
 using Admins.Shared;
+using Dommel;
 using Microsoft.Extensions.Logging;
 using SwiftlyS2.Shared.Commands;
 
@@ -39,7 +40,7 @@ public sealed partial class BansService
 
         if (args.Length < 3)
         {
-            _messenger.Syntax(issuer, command, type == BanType.IP ? "<ip> <time> <reason>" : "<player|steamid64> <time> <reason>");
+            _messenger.Syntax(issuer, command, type == BanType.IP ? "<ip> <time> <reason>" : "<player|steamid64|ip> <time> <reason>");
             return;
         }
 
@@ -51,51 +52,34 @@ public sealed partial class BansService
 
         var reason = string.Join(' ', args.Skip(2)).Trim();
 
-        if (type == BanType.IP)
+        // An address is read before names, so no player is banned by IP because their name looks like one, nor by name
+        // because it contains an address.
+        if (type == BanType.IP || Net.IsIp(args[0]))
         {
             BanIp(issuer, args[0], duration, reason, global);
             return;
         }
 
-        var players = _targets.Find(issuer.Player, args[0], out var error, excludeCaller: true);
+        var player = _targets.FindOne(issuer.Player, args[0], out var steamId, out var error);
+        if (_messenger.ReportTargetError(issuer, error, args[0])) return;
 
-        if (players.Count > 0)
+        // Bots, and humans Steam has not authorized yet.
+        if (player is { SteamID: 0 })
         {
-            foreach (var player in players)
-            {
-                if (player.IsFakeClient) continue;
-
-                if (!_access.CanTarget(issuer.Player, player.SteamID))
-                {
-                    _messenger.Reply(issuer, "command.target_has_immunity", Names.Of(player), _access.GetImmunity(player.SteamID));
-                    continue;
-                }
-
-                BanPlayer(issuer, player, type, duration, reason, global);
-            }
-
+            _messenger.Reply(issuer, "command.target_no_steamid", Names.Of(player));
             return;
         }
 
-        if (error == TargetError.Ambiguous)
+        var subject = player?.SteamID ?? steamId;
+
+        if (!_access.CanTarget(issuer.Player, subject))
         {
-            _messenger.ReportTargetError(issuer, error, args[0]);
+            _messenger.Reply(issuer, "command.target_has_immunity", player is null ? subject : Names.Of(player), _access.GetImmunity(subject));
             return;
         }
 
-        if (!SteamIds.TryParse(args[0], out var steamId))
-        {
-            _messenger.Reply(issuer, "command.player_not_found", args[0]);
-            return;
-        }
-
-        if (!_access.CanTarget(issuer.Player, steamId))
-        {
-            _messenger.Reply(issuer, "command.target_has_immunity", steamId, _access.GetImmunity(steamId));
-            return;
-        }
-
-        BanOffline(issuer, steamId, null, BanType.SteamID, duration, reason, global);
+        if (player is not null) BanPlayer(issuer, player, BanType.SteamID, duration, reason, global);
+        else BanOffline(issuer, steamId, null, BanType.SteamID, duration, reason, global);
     }
 
     // An IP ban kicks everyone connected from the address, so each of them has to be targetable.
@@ -124,36 +108,12 @@ public sealed partial class BansService
     private void HandleUnban(ICommandContext context, string command, bool byIp)
     {
         var issuer = Issuer.From(context);
-        var args = context.Args;
+        var query = string.Join(' ', context.Args).Trim();
 
-        if (args.Length < 1)
+        if (query.Length == 0)
         {
-            _messenger.Syntax(issuer, command, byIp ? "<ip>" : "<steamid64>");
+            _messenger.Syntax(issuer, command, byIp ? "<ip>" : "<player|steamid64|ip>");
             return;
-        }
-
-        ulong? steamId = null;
-        string? ip = null;
-
-        if (byIp)
-        {
-            if (!Net.IsIp(args[0]))
-            {
-                _messenger.Reply(issuer, "command.invalid_ip", args[0]);
-                return;
-            }
-
-            ip = Net.NormalizeIp(args[0]);
-        }
-        else
-        {
-            if (!SteamIds.TryParse(args[0], out var parsed))
-            {
-                _messenger.Reply(issuer, "command.invalid_steamid", args[0]);
-                return;
-            }
-
-            steamId = parsed;
         }
 
         if (!_database.Enabled)
@@ -162,13 +122,71 @@ public sealed partial class BansService
             return;
         }
 
-        var display = ip ?? steamId.ToString()!;
+        if (byIp || Net.IsIp(query))
+        {
+            if (!Net.IsIp(query))
+            {
+                _messenger.Reply(issuer, "command.invalid_ip", query);
+                return;
+            }
 
+            var ip = Net.NormalizeIp(query);
+            UnbanFound(issuer, ip, () => FindApplicableActiveAsync(null, ip));
+            return;
+        }
+
+        var player = _targets.FindOne(issuer.Player, query, out var steamId, out var error);
+
+        if (error == TargetError.Ambiguous)
+        {
+            _messenger.ReportTargetError(issuer, error, query);
+            return;
+        }
+
+        if (player is { SteamID: 0 })
+        {
+            _messenger.Reply(issuer, "command.target_no_steamid", Names.Of(player));
+            return;
+        }
+
+        if (player is not null || error == TargetError.None)
+        {
+            var id = player?.SteamID ?? steamId;
+            UnbanFound(issuer, player is null ? id.ToString() : Names.Of(player), () => FindApplicableActiveAsync(id, null));
+            return;
+        }
+
+        // Nobody on the server: whoever was banned under that name.
+        UnbanFound(issuer, query, async () =>
+        {
+            using var db = _database.Connect();
+            return TargetResolver.Named(await db.SelectAsync(Here(RecordStatus.Active)).ConfigureAwait(false), query, b => b.PlayerName ?? string.Empty);
+        }, byName: true);
+    }
+
+    private void UnbanFound(Issuer issuer, string display, Func<Task<IReadOnlyList<Ban>>> find, bool byName = false)
+    {
         _ = Task.Run(async () =>
         {
             try
             {
-                var lifted = await LiftAsync(await FindApplicableActiveAsync(steamId, ip).ConfigureAwait(false)).ConfigureAwait(false);
+                var bans = await find().ConfigureAwait(false);
+
+                if (byName)
+                {
+                    var players = bans.GroupBy(b => b.SteamId64 != 0 ? b.SteamId64.ToString() : Net.NormalizeIp(b.PlayerIp)).ToList();
+
+                    if (players.Count > 1)
+                    {
+                        var list = string.Join(", ", players.Take(5).Select(p => $"{p.First().PlayerName} ({p.Key})"));
+                        _messenger.ReplyLater(issuer, "command.multiple_records", display, list);
+                        return;
+                    }
+
+                    if (players.Count == 1) display = $"{bans[0].PlayerName} ({players[0].Key})";
+                }
+
+                var lifted = await LiftAsync(bans).ConfigureAwait(false);
                 _messenger.ReplyLater(issuer, lifted > 0 ? "ban.unban_success" : "ban.unban_none", issuer.Name, lifted, display);
             }
             catch (Exception ex)

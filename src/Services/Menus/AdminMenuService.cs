@@ -8,6 +8,7 @@ using Admins.Services.Esp;
 using Admins.Services.PlayerControl;
 using Admins.Services.Presence;
 using Admins.Services.ServerControl;
+using Admins.Services.Sessions;
 using Admins.Shared;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -40,6 +41,7 @@ public sealed partial class AdminMenuService : IAdminMenuAPI, IDisposable
     private readonly EspService _esp;
     private readonly PresenceService _presence;
     private readonly RecentPlayers _recent;
+    private readonly SessionsService _sessions;
     private readonly CancellationTokenSource _refresh;
     private readonly Lock _registryLock = new();
     private readonly List<Registration> _registrations = [];
@@ -62,6 +64,7 @@ public sealed partial class AdminMenuService : IAdminMenuAPI, IDisposable
         EspService esp,
         PresenceService presence,
         RecentPlayers recent,
+        SessionsService sessions,
         MenuShortcuts shortcuts)
     {
         _core = core;
@@ -78,6 +81,7 @@ public sealed partial class AdminMenuService : IAdminMenuAPI, IDisposable
         _esp = esp;
         _presence = presence;
         _recent = recent;
+        _sessions = sessions;
 
         shortcuts.OpenBan = (viewer, type, global) => OpenShortcut(viewer, Punishment.Ban, type == BanType.IP, global);
         shortcuts.OpenComms = (viewer, action, type, global) => OpenShortcut(viewer, KindOf(action), type == SanctionType.IP, global);

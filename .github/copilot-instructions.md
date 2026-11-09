@@ -64,10 +64,19 @@ docs/                          API docs
 - `PlayerControlService` holds the player actions. Each checks immunity itself, replies to the
   issuer on failure and announces success, whether a command or the menu called it.
 - `TargetResolver` tries `@` selectors, `#userid`, then any SteamID form, then a name typed in full
-  or a bare user id, then a part of a name, both lowercased. Two matches at one step are ambiguous
-  and target nobody. The `ip` punishments skip it and take an address. Anything by IP, those commands
-  and the menu alike, is refused while anyone connected from the address is immune
-  (`TargetResolver.OnIp`). A SteamID with nobody online behind it is punished offline.
+  or a bare user id, then a part of a name, all lowercased. Two matches at one step are ambiguous
+  and target nobody. `@all`, `@t`, `@ct`, `@spec`, `@alive` and `@dead` are read from the controller:
+  SwiftlyS2's own selectors match case-sensitively, skip players with no pawn and find no team for a
+  caller without one. Punishments and their removals check for an IP address first, so a name and an
+  address are never mistaken for each other, then take one player through `FindOne`, never a group.
+  Anything by IP, those commands and the menu alike, is refused while anyone connected from the
+  address is immune (`TargetResolver.OnIp`). A SteamID with nobody online behind it is punished
+  offline, under the name of its latest session; a removal that finds nobody looks the name up on
+  the punishments.
+- With `Bans.GlobalBansMatchIp`, a global SteamID ban also matches the IP recorded on it.
+  `BansService.Matches` and the three queries that pre-filter for it (`FindActiveBanAsync`,
+  `CheckOnlinePlayers`, the IP branch of `FindApplicableActiveAsync`) must agree. The queries spell
+  out one predicate per setting, the way `CommsService.Here` does for its nullable kind.
 - Entities kept past the call that spawned them are held as a `CHandle`: round cleanup removes
   plugin entities, and a held wrapper checks only its address, which a new entity can take. The
   beacon's beams are also marked changed (`*Updated()`) after `DispatchSpawn`, as every beam known
@@ -165,6 +174,10 @@ docs/                          API docs
   closes every tracked row when recording is turned off.
 - `!sessions` reads off the game thread and prints on it. A row open with no heartbeat for 150
   seconds is one a crash left; it shows as ended at `LastSeenAt`, not as online.
+- A player's Sessions page in the menu loads through `LoadAccountAsync`, every server's rows at
+  once: playtime per calendar period in `TimeZone` (`Messenger.UnixMs` gives the period starts),
+  addresses by session count, connections newest first. It takes `admins.commands.sessions`, as
+  `!sessions` does, because it shows IP addresses.
 
 ## Hiding, status and ESP
 
@@ -182,7 +195,8 @@ docs/                          API docs
   allowed viewers; a new connection is blocked before its first snapshot. Entity work runs in
   `OnTick`, one new pair per tick and none in the first ticks of a map, because building every pair
   inside the command once took long enough for the server to drop the admin. Blocks are released
-  before a prop despawns, since the engine reuses entity indices.
+  before a prop despawns, since the engine reuses entity indices. An alive viewer is sent them only
+  with `Esp.AllowWhileAlive` or `admins.esp.alive`, which stays outside `admins.commands.*`.
 
 ## Votes
 
@@ -196,8 +210,8 @@ can draw who called it and the tally.
 ## Menus
 
 `AdminMenuService` is split by area: `Pages` (row types, page state, helpers, permission checks),
-`Players`, `Flow` (giving a punishment), `Records` (ban and comms lists, single records) and
-`Tools` (My tools, Server). It uses `Core.Menu`, never the legacy `MenusAPI`.
+`Players`, `Flow` (giving a punishment), `Records` (ban and comms lists, single records), `Sessions`
+(a player's sessions page) and `Tools` (My tools, Server). It uses `Core.Menu`, never the legacy `MenusAPI`.
 
 | Rule | Why |
 |------|-----|

@@ -1,6 +1,7 @@
 using Admins.Contract;
 using Admins.Database.Models;
 using Admins.Shared;
+using Dommel;
 using Microsoft.Extensions.Logging;
 using SwiftlyS2.Shared.Commands;
 
@@ -66,7 +67,7 @@ public sealed partial class CommsService
 
         if (args.Length < 3)
         {
-            _messenger.Syntax(issuer, command, type == SanctionType.IP ? "<ip> <time> <reason>" : "<player|steamid64> <time> <reason>");
+            _messenger.Syntax(issuer, command, type == SanctionType.IP ? "<ip> <time> <reason>" : "<player|steamid64|ip> <time> <reason>");
             return;
         }
 
@@ -78,51 +79,32 @@ public sealed partial class CommsService
 
         var reason = string.Join(' ', args.Skip(2)).Trim();
 
-        if (type == SanctionType.IP)
+        // As for bans: an address first, so a name and an address are never mistaken for each other.
+        if (type == SanctionType.IP || Net.IsIp(args[0]))
         {
             SanctionIp(issuer, args[0], action, duration, reason, global);
             return;
         }
 
-        var players = _targets.Find(issuer.Player, args[0], out var error, excludeCaller: true);
+        var player = _targets.FindOne(issuer.Player, args[0], out var steamId, out var error);
+        if (_messenger.ReportTargetError(issuer, error, args[0])) return;
 
-        if (players.Count > 0)
+        if (player is { SteamID: 0 })
         {
-            foreach (var player in players)
-            {
-                if (player.IsFakeClient) continue;
-
-                if (!_access.CanTarget(issuer.Player, player.SteamID))
-                {
-                    _messenger.Reply(issuer, "command.target_has_immunity", Names.Of(player), _access.GetImmunity(player.SteamID));
-                    continue;
-                }
-
-                SanctionPlayer(issuer, player, action, type, duration, reason, global);
-            }
-
+            _messenger.Reply(issuer, "command.target_no_steamid", Names.Of(player));
             return;
         }
 
-        if (error == TargetError.Ambiguous)
+        var subject = player?.SteamID ?? steamId;
+
+        if (!_access.CanTarget(issuer.Player, subject))
         {
-            _messenger.ReportTargetError(issuer, error, args[0]);
+            _messenger.Reply(issuer, "command.target_has_immunity", player is null ? subject : Names.Of(player), _access.GetImmunity(subject));
             return;
         }
 
-        if (!SteamIds.TryParse(args[0], out var steamId))
-        {
-            _messenger.Reply(issuer, "command.player_not_found", args[0]);
-            return;
-        }
-
-        if (!_access.CanTarget(issuer.Player, steamId))
-        {
-            _messenger.Reply(issuer, "command.target_has_immunity", steamId, _access.GetImmunity(steamId));
-            return;
-        }
-
-        SanctionOffline(issuer, steamId, null, action, SanctionType.SteamID, duration, reason, global);
+        if (player is not null) SanctionPlayer(issuer, player, action, SanctionType.SteamID, duration, reason, global);
+        else SanctionOffline(issuer, steamId, null, action, SanctionType.SteamID, duration, reason, global);
     }
 
     // Reaches everyone connected from the address, so each of them has to be targetable.
@@ -147,42 +129,96 @@ public sealed partial class CommsService
         SanctionOffline(issuer, known?.SteamID ?? 0, ip, action, SanctionType.IP, duration, reason, global, known is null ? null : Names.Of(known));
     }
 
-    // Lifts SteamID rows and, for an online target, IP rows on their current address. Rows from another
-    // server's local sanction are left alone.
+    // An address lifts IP rows on it. A player on the server lifts their SteamID rows and IP rows on their current
+    // address, a SteamID its rows, and otherwise a name the rows recorded under it. Rows from another server's local
+    // sanction are left alone.
     private void HandleLift(ICommandContext context, string command, CommsAction action)
     {
         var issuer = Issuer.From(context);
-        var args = context.Args;
+        var query = string.Join(' ', context.Args).Trim();
 
-        if (args.Length < 1)
+        if (query.Length == 0)
         {
-            _messenger.Syntax(issuer, command, "<player|steamid64>");
+            _messenger.Syntax(issuer, command, "<player|steamid64|ip>");
             return;
         }
 
-        List<(ulong SteamId, string Ip)> subjects;
-        var players = _targets.Find(issuer.Player, args[0], out var error);
-
-        if (players.Count > 0)
+        if (Net.IsIp(query))
         {
-            subjects = [.. players.Where(p => !p.IsFakeClient).Select(p => (p.SteamID, Net.NormalizeIp(p.IPAddress)))];
-        }
-        else if (error == TargetError.Ambiguous)
-        {
-            _messenger.ReportTargetError(issuer, error, args[0]);
+            var ip = Net.NormalizeIp(query);
+            Lift(issuer, [(0, ip)], action, ip);
             return;
         }
-        else if (SteamIds.TryParse(args[0], out var steamId))
+
+        var player = _targets.FindOne(issuer.Player, query, out var steamId, out var error);
+
+        if (error == TargetError.Ambiguous)
         {
-            subjects = [(steamId, string.Empty)];
+            _messenger.ReportTargetError(issuer, error, query);
+            return;
+        }
+
+        if (player is { SteamID: 0 })
+        {
+            _messenger.Reply(issuer, "command.target_no_steamid", Names.Of(player));
+            return;
+        }
+
+        if (player is not null)
+        {
+            Lift(issuer, [(player.SteamID, Net.NormalizeIp(player.IPAddress))], action, Names.Of(player));
+        }
+        else if (error == TargetError.None)
+        {
+            Lift(issuer, [(steamId, string.Empty)], action, steamId.ToString());
+        }
+        else if (!_database.Enabled)
+        {
+            Report(issuer, action, [], query);
         }
         else
         {
-            _messenger.Reply(issuer, "command.player_not_found", args[0]);
-            return;
+            LiftNamed(issuer, query, action);
         }
+    }
 
-        Lift(issuer, subjects, action, args[0]);
+    private void LiftNamed(Issuer issuer, string name, CommsAction action)
+    {
+        var kinds = KindsOf(action);
+
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                List<Sanction> rows;
+                using (var db = _database.Connect())
+                {
+                    var active = await db.SelectAsync(Here(RecordStatus.Active, null)).ConfigureAwait(false);
+                    rows = TargetResolver.Named(active.Where(s => kinds.Contains(s.SanctionKind)), name, s => s.PlayerName ?? string.Empty);
+                }
+
+                var players = rows.GroupBy(s => s.SteamId64 != 0 ? s.SteamId64.ToString() : Net.NormalizeIp(s.PlayerIp)).ToList();
+
+                if (players.Count > 1)
+                {
+                    var list = string.Join(", ", players.Take(5).Select(p => $"{p.First().PlayerName} ({p.Key})"));
+                    _messenger.ReplyLater(issuer, "command.multiple_records", name, list);
+                    return;
+                }
+
+                await LiftAsync(rows).ConfigureAwait(false);
+                var display = players.Count == 1 ? $"{rows[0].PlayerName} ({players[0].Key})" : name;
+                _core.Scheduler.NextTick(() =>
+                {
+                    if (_messenger.IsConnected(issuer)) Report(issuer, action, rows, display);
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to lift sanctions for {Target}.", name);
+                _messenger.ReplyLater(issuer, "command.database_error");
+            }
+        });
     }
 
     /// <summary>

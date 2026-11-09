@@ -95,7 +95,7 @@ public interface IGroup
 | Member | Description |
 |--------|-------------|
 | `Task<IReadOnlyList<IBan>> FindBansAsync(long? steamId64 = null, string? playerIp = null, BanType? banType = null, RecordStatus status = RecordStatus.All)` | Bans matching the SteamID or the IP, narrowed by type and status. With neither given, every ban. Not limited to this server |
-| `Task<IBan?> FindActiveBanAsync(long steamId64, string? playerIp)` | The active ban that applies to this server for the SteamID or the IP. A SteamID ban comes before an IP ban |
+| `Task<IBan?> FindActiveBanAsync(long steamId64, string? playerIp)` | The active ban that applies to this server for the SteamID or the IP. With `Bans.GlobalBansMatchIp`, a global SteamID ban also matches the IP it was recorded with. The SteamID's own ban comes first, then an IP ban |
 | `Task<IBan> AddBanAsync(IBan ban)` | Store the ban, kick the online players it matches and raise `OnAdminBanAdded`. Returns the stored copy |
 | `Task UpdateBanAsync(IBan ban)` | Overwrite the row with the same `Id` and raise `OnAdminBanUpdated`. While the ban is active, it kicks the players it matches |
 | `Task RemoveBanAsync(IBan ban)` | Lift the ban by expiring it now. The row stays as history |
@@ -114,7 +114,7 @@ public interface IBan
     long SteamId64 { get; set; }
     string PlayerName { get; set; }
     string PlayerIp { get; set; }      // stored without a port
-    BanType BanType { get; set; }      // what it matches: the SteamID or the IP
+    BanType BanType { get; set; }      // what it matches: the SteamID or the IP; a global SteamID ban also its IP, with Bans.GlobalBansMatchIp
     long ExpiresAt { get; set; }       // when it ends; 0 = permanent
     long Length { get; set; }          // the length players and admins are shown; 0 = permanent
     string Reason { get; set; }
@@ -207,7 +207,7 @@ For a menu renderer that draws `!admin` from data instead of parsing its text, a
 |------|----|------------|
 | The admin menu | `admins.main` | - |
 | Players | `admins.players` | `IAdminPlayerList` |
-| A player, and their Punish, Control, Move and History pages | `admins.players.player`, `…player.punish`, `…player.control`, `…player.move`, `…player.history` | `AdminPlayerRow` |
+| A player, and their Punish, Control, Move, History and Sessions pages | `admins.players.player`, `…player.punish`, `…player.control`, `…player.move`, `…player.history`, `…player.sessions` | `AdminPlayerRow` |
 | A player's team, health and money pages | `admins.players.team`, `admins.players.health`, `admins.players.money` | `AdminPlayerRow` |
 | Bans, Comms | `admins.bans`, `admins.comms` | `IAdminRecordList` |
 | A record | `admins.bans.record`, `admins.comms.record` | `AdminRecordRow` |
@@ -220,10 +220,13 @@ For a menu renderer that draws `!admin` from data instead of parsing its text, a
 |-----------|------------|
 | `AdminPlayerRow(PlayerId, SessionId, SteamId64, Name)` | A player. `SessionId` identifies the connection, so a reconnect is a new row; `SteamId64` is 0 for a bot |
 | `AdminRecentRow(SteamId64, Name, LeftAt)` | Someone who left in the last few minutes, when picking who to punish |
-| `AdminPlayerGroupRow(AdminPlayerGroup)` | A link on a player's page: Punish, Control, Move or History |
+| `AdminPlayerGroupRow(AdminPlayerGroup)` | A link on a player's page: Punish, Control, Move, History or Sessions |
 | `AdminPlayerActionRow(AdminPlayerAction)` | Something to do to the player. Which way a two-way one goes (mute or unmute) is read when drawn |
 | `AdminTeamRow(Team)`, `AdminHealthRow(Health, Armor, Helmet)`, `AdminMoneyRow(Amount, Add)` | A team, a health preset, a money preset |
 | `AdminRecordRow` | A ban (`Ban`) or a gag or mute (`Sanction`). Two are equal when they are the same record |
+| `AdminPlaytimeRow(AdminPlaytimePeriod, Played)` | A player's time on every server in a period, on their Sessions page. Today, the week (from Monday), the month and the year are calendar periods in `TimeZone`; `Total` covers the sessions still kept |
+| `AdminSessionIpRow(Ip, Sessions, LastSeen)` | An address they connected from, how many sessions came from it, and when the newest ended (now while open). Picking it prints the other accounts that used it |
+| `AdminSessionRow(Id, Ip, Server, ConnectedAt, Played, Online)` | One of their connections, newest first. `Server` is another server's hostname (empty when unknown), `null` for this one; while `Online`, `Played` runs to now |
 | `AdminKindRow(AdminPunishment)`, `AdminReasonRow(Reason)`, `AdminLengthRow(Length)`, `AdminScopeRow(Global)` | A punishment step's choices. A `null` reason is a kick's "no reason"; `TimeSpan.Zero` is permanent |
 | `AdminRestartRow(DelaySeconds)`, `AdminMapRow(Map)` | A restart delay, a map |
 | `AdminVoteOptionRow(Index)` | An answer on a ballot, indexing `IAdminVote.Options` |
@@ -251,7 +254,8 @@ For a menu renderer that draws `!admin` from data instead of parsing its text, a
 | `SanctionKind` | `Gag` = 1 (text chat), `Mute` = 2 (voice) |
 | `AdminPunishment` | `Gag`, `Mute`, `Silence` (both), `Kick`, `Ban` |
 | `AdminFlowStep` | `Target`, `Kind`, `Reason`, `Length`, `Scope`, `Confirm` |
-| `AdminPlayerGroup` | `Punish`, `Control`, `Move`, `History` |
+| `AdminPlayerGroup` | `Punish`, `Control`, `Move`, `History`, `Sessions` |
+| `AdminPlaytimePeriod` | `Today`, `Week`, `Month`, `Year`, `Total` |
 | `AdminPlayerAction` | `Kick`, `Ban`, `Mute`, `Gag`, `Silence`, `Slay`, `Freeze`, `Slap`, `Respawn`, `RespawnWhereDied`, `Team`, `Swap`, `Beacon`, `Drug`, `God`, `Noclip`, `Goto`, `Bring`, `Rename`, `Health`, `Money` |
 | `AdminVoteKind` | `Poll`, `Kick` (a tie keeps the player), `Map` |
 | `AdminAction` | The controls an `AdminActionRow` stands for; each value's doc comment names its page |

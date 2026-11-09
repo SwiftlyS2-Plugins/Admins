@@ -31,4 +31,7 @@ public sealed class BansConfiguration
 
     [Description("Kick players whose Steam authorization fails. Turning this off lets players in during Steam outages, but their bans and admin rights cannot be checked until they authorize.")]
     public bool KickOnSteamAuthorizationFailure { get; set; } = true;
+
+    [Description("A global ban of a SteamID also bans the IP address the player had when banned, on every server, and so anyone else connecting from it, admins included. Bans issued by SteamID alone to a player who is not on the server have no address. Applies to existing global bans too.")]
+    public bool GlobalBansMatchIp { get; set; } = true;
 }

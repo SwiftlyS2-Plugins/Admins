@@ -152,6 +152,17 @@ public sealed class Messenger : IDisposable
 
     public DateTimeOffset Now() => TimeZoneInfo.ConvertTime(DateTimeOffset.UtcNow, _timeZone);
 
+    /// <summary>A wall-clock time in the configured time zone, as Unix ms.</summary>
+    public long UnixMs(DateTime local)
+    {
+        var zone = _timeZone;
+        local = DateTime.SpecifyKind(local, DateTimeKind.Unspecified);
+
+        // A midnight a clock change skips does not exist; that day starts an hour later.
+        if (zone.IsInvalidTime(local)) local = local.AddHours(1);
+        return new DateTimeOffset(TimeZoneInfo.ConvertTimeToUtc(local, zone)).ToUnixTimeMilliseconds();
+    }
+
     public void Dispose() => _subscription?.Dispose();
 
     private static TimeZoneInfo ResolveTimeZone(string? id)

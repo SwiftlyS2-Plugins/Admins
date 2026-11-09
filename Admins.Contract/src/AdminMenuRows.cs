@@ -60,6 +60,22 @@ public sealed class AdminRecordRow : IEquatable<AdminRecordRow>
     public override int GetHashCode() => HashCode.Combine(Ban is null, Id);
 }
 
+/// <summary>
+/// A player's time on every server sharing the database, a row of their Sessions page. Today, the week (from Monday),
+/// the month and the year are calendar periods in Admins' <c>TimeZone</c>; the total covers the sessions still kept.
+/// </summary>
+public sealed record AdminPlaytimeRow(AdminPlaytimePeriod Period, TimeSpan Played);
+
+/// <summary>An address a player connected from, a row of their Sessions page. Picking it prints who else used it.</summary>
+/// <param name="Sessions">How many sessions came from it.</param>
+/// <param name="LastSeen">When the newest of them ended, or now while it is open.</param>
+public sealed record AdminSessionIpRow(string Ip, int Sessions, DateTimeOffset LastSeen);
+
+/// <summary>One connection, a row of a player's Sessions page, newest first.</summary>
+/// <param name="Server">The hostname of the server it was on, empty when unknown; null for this server.</param>
+/// <param name="Online">Still connected, so <see cref="Played"/> runs to now.</param>
+public sealed record AdminSessionRow(long Id, string Ip, string? Server, DateTimeOffset ConnectedAt, TimeSpan Played, bool Online);
+
 /// <summary>A kind to give, on the kind step of giving a gag or mute.</summary>
 public sealed record AdminKindRow(AdminPunishment Kind);
 
@@ -93,6 +109,16 @@ public enum AdminPlayerGroup
     Control,
     Move,
     History,
+    Sessions,
+}
+
+public enum AdminPlaytimePeriod
+{
+    Today,
+    Week,
+    Month,
+    Year,
+    Total,
 }
 
 public enum AdminPlayerAction

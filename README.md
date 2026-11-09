@@ -87,12 +87,13 @@ Plugins built against the old `V1` interfaces need updating, see [API Integratio
 | `Bans.Reasons` | list | Reasons the menu offers for a ban |
 | `Bans.DurationsInSeconds` | `[1800, 3600, 21600, 86400, 604800, 2592000, 0]` | Lengths the menu offers for a ban. `0` = permanent |
 | `Bans.KickOnSteamAuthorizationFailure` | `true` | Kick players Steam cannot authorize. `false` lets them in during Steam outages, but their bans and admin rights go unchecked until they authorize |
+| `Bans.GlobalBansMatchIp` | `true` | A global ban also blocks the IP address the player had when banned, on every server, and so anyone else connecting from it, admins included. A SteamID banned while not on the server has no address. Applies to existing global bans too |
 | `Comms.DatabaseSyncIntervalSeconds` | `30` | How often online players' gags and mutes are reloaded. `0` = off |
 | `Comms.Reasons` | list | Reasons the menu offers for a gag or mute |
 | `Comms.DurationsInSeconds` | as `Bans` | Lengths the menu offers for a gag or mute |
 | `Comms.EnableAdminChat` | `true` | Send team chat starting with `AdminChatStartCharacter` to the admins instead of the team |
 | `Comms.AdminChatStartCharacter` | `@` | The admin chat prefix |
-| `Sessions.Enabled` | `true` | Keep every connection in `player_sessions`, for `!sessions` and so the menu's *Recently left* survives a restart |
+| `Sessions.Enabled` | `true` | Keep every connection in `player_sessions`, for `!sessions`, a player's Sessions page in the menu, and so the menu's *Recently left* survives a restart |
 | `Sessions.RetentionDays` | `90` | Days this server's finished sessions are kept. `0` = forever |
 | `Kick.Reasons` | `["AFK", "Mic spam", "Toxic", "Bad name", "Other"]` | Reasons the menu offers for a kick, after *No reason* |
 | `Beacon.Sound` | `admins.beacon_beep` | Sound event a beacon plays from the player on each pulse, for everyone. Players hear it only once your addon ships it: see [Beacon sound](#beacon-sound). Empty = silent |
@@ -103,7 +104,7 @@ Plugins built against the old `V1` interfaces need updating, see [API Integratio
 | `Status.Header` | see file | Lines above the players. Placeholders: `{hostname}`, `{map}`, `{humans}`, `{bots}`, `{maxplayers}`, `{date}`, `{time}` |
 | `Status.Row` | see file | One line per player. Placeholders: `{userid}`, `{name}`, `{steamid}`, `{duration}`, `{ping}` |
 | `Status.Footer` | `["#end"]` | Lines below the players, with the header's placeholders |
-| `Esp.AllowWhileAlive` | `false` | Show ESP to admins who are alive too, not only to dead and spectating ones |
+| `Esp.AllowWhileAlive` | `false` | Show ESP to every admin who is alive too, not only to dead and spectating ones. `admins.esp.alive` does this for one admin |
 
 A width pads a placeholder and cuts it when longer: `{name,-24}` is left-aligned in 24 columns, `{ping,4}` right-aligned in 4.
 
@@ -133,7 +134,8 @@ Admin Menu                  !admin
 │     ├─ Punish             kick, ban, gag, mute, silence, slay, ungag, unmute
 │     ├─ Control            freeze, slap, respawn, team, beacon, drug, god mode, noclip
 │     ├─ Move and edit      go to, bring, rename, health, money
-│     └─ History (n)        their bans, gags and mutes on every server
+│     ├─ History (n)        their bans, gags and mutes on every server
+│     └─ Sessions           their time played, IP addresses and connections on every server
 ├─ Bans                     Show: All, Active or Expired
 │  ├─ Give ban
 │  └─ <ban>                 summary, remove, change length, their player page
@@ -143,7 +145,7 @@ Admin Menu                  !admin
 └─ <other plugins' entries>
 ```
 
-Bans and Comms list the punishments that apply to this server, ended and removed ones included, and need the database. A player's page offers only what applies right now, such as respawn while they are dead; once they leave, it keeps ban, gag, mute and silence, which then act on their SteamID. Remove and change length are offered for active punishments of this server.
+Bans and Comms list the punishments that apply to this server, ended and removed ones included, and need the database. A player's page offers only what applies right now, such as respawn while they are dead; once they leave, it keeps ban, gag, mute and silence, which then act on their SteamID. A bot has no SteamID, so on its page those four open the punishment's player list instead. Remove and change length are offered for active punishments of this server.
 
 ### Giving a punishment
 
@@ -191,7 +193,7 @@ The bindings are SwiftlyS2's, set in its `configs/menus/menus.jsonc`.
 
 Hiding covers the game's own lists only. The server browser and outside tools such as a website's server list still count you, messages about the actions you take still name you, and `mp_force_pick_time` forcing you onto a team ends the hide.
 
-**`!esp`** outlines every living player through walls, T in red and CT in blue, while you are dead or spectating, or always with `Esp.AllowWhileAlive`. No one else receives the outlines.
+**`!esp`** outlines every living player through walls, T in red and CT in blue, while you are dead or spectating, or always with `admins.esp.alive` or `Esp.AllowWhileAlive`. No one else receives the outlines.
 
 **Join and leave messages**: with `Presence.ConnectMessages`, "*name* joined the game" once a player has loaded in, and "*name* left the game (*reason*)" with Disconnect, Kicked, Banned or Timed out. These are what `!hide` and `!unhide` fake.
 
@@ -208,11 +210,17 @@ Wherever a command takes `<player>`:
 | `name` | A name, ignoring case: one typed in full, otherwise a part of a name that matches exactly one player |
 | `#userid` or `userid` | The player with that user id, the first column of `status` |
 | SteamID | The player with that SteamID: `76561198000000000`, `STEAM_0:1:123` or `[U:1:246]` |
-| `@all`, `@t`, `@ct`, `@me`, `@aim`, ... | SwiftlyS2's target selectors |
+| `@all`, `@t`, `@ct`, `@spec`, `@alive`, `@dead` | A group, in any case. `@spec` includes players on no team yet, `@dead` only players on a team. SwiftlyS2's other selectors, such as `@me` and `@aim`, work too |
 
-A full name or a user id wins over a part of a name. When more than one player matches, nobody is targeted and the command asks for more.
+A full name or a user id wins over a part of a name. When more than one player matches, nobody is targeted and the command asks for more. `!kick`, `!bring` and `!votekick` leave the admin running them out of groups.
 
-Bans, gags, mutes, `!kick`, `!bring` and `!votekick` leave the admin running them out of group selectors such as `@all`. The ban, gag, mute and silence commands punish a SteamID that is not on the server too, so a player who left is still reached. Their `ip` forms take an IP address and nothing else, and refuse it while someone immune to you is connected from it.
+Bans, gags, mutes and silences take one player, never a group:
+
+- An IP address is checked for before anything else and punishes the address, as the `ip` forms do, so a name is never taken for an address or an address for a name. The `ip` forms take an address and nothing else. Either refuses it while someone immune to you is connected from it.
+- A SteamID that is not on the server is punished offline, by SteamID alone, under the name of their latest session when one is kept. So a player who left is still reached.
+- A bot, or a player Steam has not authorized yet, has no SteamID to punish.
+
+`!unban`, `!ungag`, `!unmute` and `!unsilence` take a player on the server, a SteamID or an IP address, or else the name a punishment was recorded under. A name that more than one punished player had asks for their SteamID. They lift what applies to this server: its own punishments and global ones.
 
 ### Admin Management
 
@@ -229,12 +237,14 @@ The last three keep their singular `admins.command.` prefix, so `admins.commands
 
 | Command | Arguments | Permission | Description |
 |---------|-----------|------------|-------------|
-| `!ban` | `<player\|steamid64> <time> <reason>` | `admins.commands.ban` | Ban by SteamID. |
-| `!globalban` | `<player\|steamid64> <time> <reason>` | `admins.commands.globalban` | Ban by SteamID on every server. |
+| `!ban` | `<player\|steamid64\|ip> <time> <reason>` | `admins.commands.ban` | Ban by SteamID, or an IP address. |
+| `!globalban` | `<player\|steamid64\|ip> <time> <reason>` | `admins.commands.globalban` | Ban on every server, by SteamID and, with `Bans.GlobalBansMatchIp`, the IP address the player is connected from. |
 | `!banip` | `<ip> <time> <reason>` | `admins.commands.ban` | Ban by IP address. |
 | `!globalbanip` | `<ip> <time> <reason>` | `admins.commands.globalban` | Ban by IP address on every server. |
-| `!unban` | `<steamid64>` | `admins.commands.unban` | Lift the active bans of a SteamID that apply to this server: its own and global ones. |
+| `!unban` | `<player\|steamid64\|ip>` | `admins.commands.unban` | Lift the active bans that apply to this server, its own and global ones. |
 | `!unbanip` | `<ip>` | `admins.commands.unban` | Lift the active bans of an IP address that apply to this server. |
+
+An IP address lifts the bans of that address and, with `Bans.GlobalBansMatchIp`, the global bans recorded with it, which unbans those players too.
 
 ### Gags & Mutes
 
@@ -242,17 +252,19 @@ A **gag** blocks text chat, a **mute** blocks voice chat and a **silence** does 
 
 | Command | Arguments | Permission | Description |
 |---------|-----------|------------|-------------|
-| `!gag` | `<player\|steamid64> <time> <reason>` | `admins.commands.gag` | Block text chat. |
-| `!mute` | `<player\|steamid64> <time> <reason>` | `admins.commands.mute` | Block voice chat. |
-| `!silence` | `<player\|steamid64> <time> <reason>` | `admins.commands.silence` | Block text and voice chat. |
-| `!globalgag` | `<player\|steamid64> <time> <reason>` | `admins.commands.globalgag` | Block text chat on every server. |
-| `!globalmute` | `<player\|steamid64> <time> <reason>` | `admins.commands.globalmute` | Block voice chat on every server. |
-| `!globalsilence` | `<player\|steamid64> <time> <reason>` | `admins.commands.globalsilence` | Block both on every server. |
+| `!gag` | `<player\|steamid64\|ip> <time> <reason>` | `admins.commands.gag` | Block text chat. |
+| `!mute` | `<player\|steamid64\|ip> <time> <reason>` | `admins.commands.mute` | Block voice chat. |
+| `!silence` | `<player\|steamid64\|ip> <time> <reason>` | `admins.commands.silence` | Block text and voice chat. |
+| `!globalgag` | `<player\|steamid64\|ip> <time> <reason>` | `admins.commands.globalgag` | Block text chat on every server. |
+| `!globalmute` | `<player\|steamid64\|ip> <time> <reason>` | `admins.commands.globalmute` | Block voice chat on every server. |
+| `!globalsilence` | `<player\|steamid64\|ip> <time> <reason>` | `admins.commands.globalsilence` | Block both on every server. |
 | `!gagip`, `!muteip`, `!silenceip` | `<ip> <time> <reason>` | `admins.commands.gag`, `.mute`, `.silence` | The same, by IP address. |
 | `!globalgagip`, `!globalmuteip`, `!globalsilenceip` | `<ip> <time> <reason>` | `admins.commands.globalgag`, `.globalmute`, `.globalsilence` | The same, by IP address on every server. |
-| `!ungag` | `<player\|steamid64>` | `admins.commands.ungag` | Lift the active gags that apply to this server. |
-| `!unmute` | `<player\|steamid64>` | `admins.commands.unmute` | Lift the active mutes that apply to this server. |
-| `!unsilence` | `<player\|steamid64>` | `admins.commands.unsilence` | Lift both. |
+| `!ungag` | `<player\|steamid64\|ip>` | `admins.commands.ungag` | Lift the active gags that apply to this server. |
+| `!unmute` | `<player\|steamid64\|ip>` | `admins.commands.unmute` | Lift the active mutes that apply to this server. |
+| `!unsilence` | `<player\|steamid64\|ip>` | `admins.commands.unsilence` | Lift both. |
+
+Gags and mutes given by SteamID match only the SteamID, global ones included. A player on the server is ungagged or unmuted by SteamID and by the IP address they are on; an IP address lifts the gags and mutes of that address.
 
 ### Sessions
 
@@ -261,8 +273,11 @@ Every connection is kept in `player_sessions`: the account, its name and IP addr
 | Command | Arguments | Permission | Description |
 |---------|-----------|------------|-------------|
 | `!sessions` | `[player\|steamid64\|ip\|name]` | `admins.commands.sessions` | Without an argument, the latest connections to this server. For a player or SteamID, their latest connections on every server, how often and how long they played, and the other accounts that connected from their IP addresses. For an IP address, every account that connected from it. A name that is not on the server is looked for in the latest 5000 connections. |
+| `!who` | `<player>` | `admins.commands.who` | A player's name, user id, SteamID, IP address and how long they have been connected, in chat and in your console. |
 
-`!sessions` shows IP addresses, so give `admins.commands.sessions` only to staff who may see them. It answers in chat; typed as `sw_sessions` in the console, it answers there.
+`!sessions`, `!who` and the menu's Sessions page show IP addresses, so give their permissions only to staff who may see them. `!sessions` answers in chat; typed as `sw_sessions` in the console, it answers there.
+
+A player's page in `!admin` has **Sessions** for whoever has `admins.commands.sessions`: their time played today, this week (from Monday), this month, this year and in total, by `TimeZone`; each IP address they used with how many sessions came from it, which prints the other accounts that used it when picked; and their newest 100 connections. It covers every server on the database, but only the sessions still kept, so with `Sessions.RetentionDays` at 90, *This year* and *Total* reach back 90 days at most.
 
 ### Player Commands
 
@@ -401,9 +416,10 @@ Each command's permission is in its table. Besides those:
 |------------|--------|
 | `admins.chat` | Admin chat: team chat starting with `@` from anyone goes to the holders instead of the team. A gagged player can still send it |
 | `admins.notify` | A message when a player with bans, gags or mutes on record connects |
+| `admins.esp.alive` | `!esp` outlines while you are alive too, not only while dead or spectating |
 | `admins.menu.bans`, `admins.menu.comms` | From the old menu plugin: banning, gagging and muting on this server from the menu |
 
-A permission ending in `.*` grants every permission that starts with the part before it. `admins.*` covers this whole plugin. `admins.commands.*` covers every `admins.commands.` permission, so not `admins.command.admins`, `admins.command.groups`, `admins.command.reloadadmins`, `admins.chat`, `admins.notify` or the `admins.menu.` ones.
+A permission ending in `.*` grants every permission that starts with the part before it. `admins.*` covers this whole plugin. `admins.commands.*` covers every `admins.commands.` permission, so not `admins.command.admins`, `admins.command.groups`, `admins.command.reloadadmins`, `admins.chat`, `admins.notify`, `admins.esp.alive` or the `admins.menu.` ones.
 
 ## Managing Admins from the Console
 

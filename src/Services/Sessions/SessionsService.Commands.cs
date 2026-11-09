@@ -44,8 +44,7 @@ public sealed partial class SessionsService
 
         if (Net.IsIp(query))
         {
-            var ip = Net.NormalizeIp(query);
-            Lookup(issuer, ip, db => db.SelectAsync<PlayerSession>(s => s.PlayerIp == ip), rows => PrintIp(issuer, ip, [.. rows]));
+            ShowIp(issuer, Net.NormalizeIp(query));
             return;
         }
 
@@ -71,6 +70,41 @@ public sealed partial class SessionsService
         }
 
         SearchName(issuer, query);
+    }
+
+    /// <summary>Prints every account that connected from <paramref name="ip"/>, as <c>!sessions &lt;ip&gt;</c> does.</summary>
+    public void ShowIp(Issuer issuer, string ip) =>
+        Lookup(issuer, ip, db => db.SelectAsync<PlayerSession>(s => s.PlayerIp == ip), rows => PrintIp(issuer, ip, [.. rows]));
+
+    [Command("who", permission: "admins.commands.who")]
+    public void WhoCommand(ICommandContext context)
+    {
+        var issuer = Issuer.From(context);
+        var query = string.Join(' ', context.Args).Trim();
+
+        if (query.Length == 0)
+        {
+            _messenger.Syntax(issuer, "who", "<player>");
+            return;
+        }
+
+        var players = _targets.Find(issuer.Player, query, out var error, groups: false);
+        if (_messenger.ReportTargetError(issuer, error, query)) return;
+
+        var player = players[0];
+        object[] args =
+        [
+            Names.Of(player),
+            player.UserID,
+            player.SteamID == 0 ? "-" : player.SteamID,
+            Net.NormalizeIp(player.IPAddress) is { Length: > 0 } ip ? ip : "-",
+            Durations.Format(TimeSpan.FromSeconds(player.ConnectedTime)),
+        ];
+
+        _messenger.Reply(issuer, "who.row", args);
+
+        // !who answers in chat; sw_who already answers in the console.
+        if (issuer.Player is { } viewer && context.Prefix != "sw_") viewer.SendConsole(_messenger.Text(viewer, "who.row", args));
     }
 
     private void ShowAccount(Issuer issuer, ulong steamId)

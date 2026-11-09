@@ -221,10 +221,11 @@ public sealed partial class AdminMenuService
         };
 
         var withHistory = target.SteamId != 0 && _database.Enabled && (BanListAvailable(viewer) || CommsListAvailable(viewer));
+        var withSessions = SessionsAvailable(viewer, target);
 
         bool AnyShown(Act[] acts) => acts.Any(a => a.Visible(Live(target)));
 
-        builder.AddHeader(Line(_ => T(viewer, "menu.hub.nothing"), _ => !withHistory && !groups.Any(g => AnyShown(g.Acts))));
+        builder.AddHeader(Line(_ => T(viewer, "menu.hub.nothing"), _ => !withHistory && !withSessions && !groups.Any(g => AnyShown(g.Acts))));
 
         foreach (var (group, id, label, title, acts) in groups)
         {
@@ -243,6 +244,13 @@ public sealed partial class AdminMenuService
             var link = Cached(string.Empty, () => HistoryPage(viewer, target, history));
             link.TextProvider = _ => history.Records is { } records ? T(viewer, "menu.player.history", records.Count) : T(viewer, "menu.player.history_plain");
             link.Tag = new AdminPlayerGroupRow(AdminPlayerGroup.History);
+            builder.Add(link);
+        }
+
+        if (withSessions)
+        {
+            var link = Cached(T(viewer, "menu.player.sessions"), () => SessionsPage(viewer, target));
+            link.Tag = new AdminPlayerGroupRow(AdminPlayerGroup.Sessions);
             builder.Add(link);
         }
 
@@ -301,10 +309,20 @@ public sealed partial class AdminMenuService
         var acts = new List<Act>();
         var issuer = Issuer.From(viewer);
 
-        bool Punishable(IPlayer p) => !IsSelf(viewer, p) && !Immune(viewer, p);
-        bool Human(IPlayer p) => Punishable(p) && !p.IsFakeClient && p.SteamID != 0;
-        bool Issuable(IPlayer? p) => p is null ? target.SteamId != 0 && _database.Enabled && _access.CanTarget(viewer, target.SteamId) : Human(p);
-        PlayerRef Ref(IPlayer? p) => p is null ? target : PlayerRef.Of(p);
+        bool Punishable(IPlayer p) => !Immune(viewer, p);
+        bool HasSteamId(IPlayer p) => !p.IsFakeClient && p.SteamID != 0;
+        bool Human(IPlayer p) => Punishable(p) && HasSteamId(p);
+        bool Issuable(IPlayer? p) => p is null ? target.SteamId != 0 && _database.Enabled && _access.CanTarget(viewer, target.SteamId) : Punishable(p);
+
+        // A bot, or a player still joining, has no SteamID to hold it, so the punishment opens on its own player list.
+        IMenu Issue(Punishment kind, IPlayer? p, IMenu? landOn)
+        {
+            if (p is null || HasSteamId(p)) return ReasonPage(viewer, NewDraft(viewer, kind, p is null ? target : PlayerRef.Of(p), landOn));
+
+            var draft = NewDraft(viewer, kind, null, landOn);
+            draft.StartedFrom = Names.Of(p);
+            return TargetPage(viewer, draft);
+        }
 
         if (CanPunishAny(viewer, Punishment.Kick))
         {
@@ -318,7 +336,7 @@ public sealed partial class AdminMenuService
 
         if (CanPunishAny(viewer, Punishment.Ban))
         {
-            acts.Add(new Act(AdminPlayerAction.Ban, _ => T(viewer, "menu.punish.ban"), Issuable, (p, _) => ReasonPage(viewer, NewDraft(viewer, Punishment.Ban, Ref(p), afterRemoval)), Risky: true));
+            acts.Add(new Act(AdminPlayerAction.Ban, _ => T(viewer, "menu.punish.ban"), Issuable, (p, _) => Issue(Punishment.Ban, p, afterRemoval), Risky: true));
         }
 
         foreach (var kind in new[] { Punishment.Mute, Punishment.Gag })
@@ -336,7 +354,7 @@ public sealed partial class AdminMenuService
                 p => Active(p) is not null ? canLift && Human(p!) : canIssue && Issuable(p),
                 (p, session) =>
                 {
-                    if (Active(p) is null) return ReasonPage(viewer, NewDraft(viewer, kind, Ref(p), session.Menu));
+                    if (Active(p) is null) return Issue(kind, p, session.Menu);
 
                     _comms.Lift(issuer, [(p!.SteamID, Net.NormalizeIp(p.IPAddress))], ActionOf(kind), Names.Of(p));
                     return null;
@@ -349,7 +367,7 @@ public sealed partial class AdminMenuService
                 AdminPlayerAction.Silence,
                 _ => T(viewer, "menu.punish.silence"),
                 p => Issuable(p) && (p is null || (_comms.GetActive(p, SanctionKind.Gag) is null && _comms.GetActive(p, SanctionKind.Mute) is null)),
-                (p, session) => ReasonPage(viewer, NewDraft(viewer, Punishment.Silence, Ref(p), session.Menu))));
+                (p, session) => Issue(Punishment.Silence, p, session.Menu)));
         }
 
         if (Has(viewer, "admins.commands.slay"))

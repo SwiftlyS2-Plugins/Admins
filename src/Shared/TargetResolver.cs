@@ -1,5 +1,6 @@
 using SwiftlyS2.Shared;
 using SwiftlyS2.Shared.Players;
+using SwiftlyS2.Shared.SchemaDefinitions;
 
 namespace Admins.Shared;
 
@@ -17,31 +18,43 @@ public enum TargetError
 public sealed class TargetResolver(ISwiftlyCore core)
 {
     /// <param name="excludeCaller">Drops the caller from group selectors such as <c>@all</c> or <c>@t</c>; <c>@me</c> still works.</param>
-    public IReadOnlyList<IPlayer> Find(IPlayer? caller, string? query, out TargetError error, bool excludeCaller = false)
+    /// <param name="groups">Off, a query starting with <c>@</c> is read as a name, so it finds one player at most.</param>
+    public IReadOnlyList<IPlayer> Find(IPlayer? caller, string? query, out TargetError error, bool excludeCaller = false, bool groups = true)
     {
         error = TargetError.NotFound;
         if (string.IsNullOrWhiteSpace(query)) return [];
 
         var text = query.Trim();
+        var players = core.PlayerManager.GetAllPlayers().Where(p => p.Controller is not { IsValid: true, IsHLTV: true }).ToList();
 
-        if (text.StartsWith('@'))
+        if (groups && text.StartsWith('@'))
         {
-            var isMe = text.Equals("@me", StringComparison.OrdinalIgnoreCase);
-
-            // FindTargettedPlayers dereferences the caller for these selectors.
-            if (caller is null && (isMe || text.StartsWith("@aim", StringComparison.OrdinalIgnoreCase)))
-            {
-                return [];
-            }
-
+            // SwiftlyS2's selectors match tags case-sensitively, skip players with no pawn, and find no team at all
+            // for a caller without one, so these are read from the controller here.
+            var tag = text.ToLowerInvariant();
+            var isMe = tag == "@me";
             List<IPlayer> group;
-            try
+
+            if (Selector(tag) is { } member)
             {
-                group = [.. core.PlayerManager.FindTargettedPlayers(caller!, text, TargetSearchMode.IncludeSelf)];
+                group = [.. players.Where(member)];
             }
-            catch (Exception)
+            else
             {
-                return [];
+                // FindTargettedPlayers dereferences the caller for these selectors.
+                if (caller is null && (isMe || tag.StartsWith("@aim", StringComparison.Ordinal)))
+                {
+                    return [];
+                }
+
+                try
+                {
+                    group = [.. core.PlayerManager.FindTargettedPlayers(caller!, tag, TargetSearchMode.IncludeSelf)];
+                }
+                catch (Exception)
+                {
+                    return [];
+                }
             }
 
             if (excludeCaller && caller is not null && !isMe) group.RemoveAll(p => p.Slot == caller.Slot);
@@ -49,8 +62,6 @@ public sealed class TargetResolver(ISwiftlyCore core)
             error = group.Count == 0 ? TargetError.NotFound : TargetError.None;
             return group;
         }
-
-        var players = core.PlayerManager.GetAllPlayers().Where(p => p.Controller is not { IsValid: true, IsHLTV: true }).ToList();
 
         if (text.StartsWith('#') && int.TryParse(text[1..], out var id))
         {
@@ -79,9 +90,51 @@ public sealed class TargetResolver(ISwiftlyCore core)
         return Single(matches.Count == 1 ? matches[0].Player : null, out error);
     }
 
+    /// <summary>
+    /// A punishment's target: one player found by name, SteamID or user id, never a group. With nobody on the server
+    /// behind a SteamID, returns null with <paramref name="steamId"/> set and no error, for an offline punishment.
+    /// </summary>
+    public IPlayer? FindOne(IPlayer? caller, string query, out ulong steamId, out TargetError error)
+    {
+        steamId = 0;
+        var players = Find(caller, query, out error, groups: false);
+        if (players.Count > 0) return players[0];
+
+        if (error == TargetError.NotFound && SteamIds.TryParse(query.Trim(), out steamId)) error = TargetError.None;
+        return null;
+    }
+
     /// <summary>The humans connected from <paramref name="ip"/>, a normalized address.</summary>
     public IReadOnlyList<IPlayer> OnIp(string ip) =>
         [.. core.PlayerManager.GetAllPlayers().Where(p => !p.IsFakeClient && Net.NormalizeIp(p.IPAddress) == ip)];
+
+    /// <summary>
+    /// The records named <paramref name="query"/>, ignoring case, or else those whose name contains it, as players on
+    /// the server are matched.
+    /// </summary>
+    public static List<T> Named<T>(IEnumerable<T> records, string query, Func<T, string> name)
+    {
+        var lowered = query.Trim().ToLowerInvariant();
+        var named = records.Where(r => name(r).ToLowerInvariant().Contains(lowered, StringComparison.Ordinal)).ToList();
+        var exact = named.Where(r => name(r).ToLowerInvariant() == lowered).ToList();
+        return exact.Count > 0 ? exact : named;
+    }
+
+    private static Func<IPlayer, bool>? Selector(string tag) => tag switch
+    {
+        "@all" => _ => true,
+        "@t" => p => TeamOf(p) == Team.T,
+        "@ct" => p => TeamOf(p) == Team.CT,
+        "@spec" => p => TeamOf(p) is Team.Spectator or Team.None,
+        "@alive" => IsAlive,
+        "@dead" => p => TeamOf(p) is Team.T or Team.CT && !IsAlive(p),
+        _ => null,
+    };
+
+    private static Team TeamOf(IPlayer player) => player.Controller is { IsValid: true } controller ? (Team)controller.TeamNum : Team.None;
+
+    private static bool IsAlive(IPlayer player) =>
+        player.PlayerPawn is { IsValid: true } pawn && pawn.LifeState == (byte)LifeState_t.LIFE_ALIVE;
 
     private static IReadOnlyList<IPlayer> Single(IPlayer? player, out TargetError error)
     {

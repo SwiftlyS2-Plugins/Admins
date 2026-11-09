@@ -5,6 +5,7 @@ using Admins.Database.Models;
 using Admins.Models;
 using Admins.Services.Access;
 using Admins.Services.Server;
+using Admins.Services.Sessions;
 using Admins.Shared;
 using Dommel;
 using Microsoft.Extensions.Logging;
@@ -140,10 +141,15 @@ public sealed partial class BansService : IBansManager, IDisposable
                 var guid = _server.Guid;
 
                 using var db = _database.Connect();
-                var bans = (await db.SelectAsync<Ban>(b =>
-                    ((b.BanType == BanType.SteamID && steamIds.Contains(b.SteamId64)) || (b.BanType == BanType.IP && ips.Contains(b.PlayerIp)))
-                    && (b.ExpiresAt == 0 || b.ExpiresAt > now)
-                    && (b.Server == guid || b.GlobalBan == true)).ConfigureAwait(false)).ToList();
+                var bans = (_config.GlobalBansMatchIp
+                    ? await db.SelectAsync<Ban>(b =>
+                        ((b.BanType == BanType.SteamID && steamIds.Contains(b.SteamId64)) || ((b.BanType == BanType.IP || b.GlobalBan == true) && ips.Contains(b.PlayerIp)))
+                        && (b.ExpiresAt == 0 || b.ExpiresAt > now)
+                        && (b.Server == guid || b.GlobalBan == true)).ConfigureAwait(false)
+                    : await db.SelectAsync<Ban>(b =>
+                        ((b.BanType == BanType.SteamID && steamIds.Contains(b.SteamId64)) || (b.BanType == BanType.IP && ips.Contains(b.PlayerIp)))
+                        && (b.ExpiresAt == 0 || b.ExpiresAt > now)
+                        && (b.Server == guid || b.GlobalBan == true)).ConfigureAwait(false)).ToList();
 
                 if (bans.Count == 0) return;
 
@@ -170,10 +176,13 @@ public sealed partial class BansService : IBansManager, IDisposable
         }
     }
 
-    private static bool Matches(Ban ban, ulong steamId, string ip) =>
-        ban.BanType == BanType.SteamID
-            ? steamId != 0 && (ulong)ban.SteamId64 == steamId
-            : ip.Length > 0 && Net.NormalizeIp(ban.PlayerIp) == ip;
+    private bool Matches(Ban ban, ulong steamId, string ip)
+    {
+        if (ban.BanType == BanType.SteamID && steamId != 0 && (ulong)ban.SteamId64 == steamId) return true;
+
+        return (ban.BanType == BanType.IP || (ban.GlobalBan && _config.GlobalBansMatchIp))
+            && ip.Length > 0 && Net.NormalizeIp(ban.PlayerIp) == ip;
+    }
 
     private void Kick(PlayerRef target, Ban ban)
     {
@@ -208,14 +217,15 @@ public sealed partial class BansService : IBansManager, IDisposable
     /// Bans a SteamID64 or an IP address as given, kicking whoever on the server it matches. Game thread; the caller has
     /// already checked immunity.
     /// </summary>
-    /// <param name="name">The player's last known name, when there is one.</param>
+    /// <param name="name">The player's last known name. Without one, a SteamID ban takes the name of their latest session.</param>
     public void BanOffline(Issuer issuer, ulong steamId64, string? ip, BanType type, TimeSpan duration, string reason, bool global, string? name = null)
     {
         var address = Net.NormalizeIp(ip);
         var id = type == BanType.IP ? address : steamId64.ToString();
         var known = !string.IsNullOrWhiteSpace(name);
+        var ban = NewBan(issuer, (long)steamId64, known ? name! : "Unknown", address, type, duration, reason, global);
 
-        Store(issuer, NewBan(issuer, (long)steamId64, known ? name! : "Unknown", address, type, duration, reason, global), known ? $"{name} ({id})" : id);
+        Store(issuer, ban, known ? $"{name} ({id})" : id, lookupName: !known && type == BanType.SteamID && steamId64 != 0);
     }
 
     private Ban NewBan(Issuer issuer, long steamId64, string name, string ip, BanType type, TimeSpan duration, string reason, bool global)
@@ -241,7 +251,7 @@ public sealed partial class BansService : IBansManager, IDisposable
     }
 
     // Kicks even when storing fails: the player still has to leave, and the admin is told the ban was not saved.
-    private void Store(Issuer issuer, Ban ban, string display)
+    private void Store(Issuer issuer, Ban ban, string display, bool lookupName = false)
     {
         _ = Task.Run(async () =>
         {
@@ -252,6 +262,13 @@ public sealed partial class BansService : IBansManager, IDisposable
                 try
                 {
                     using var db = _database.Connect();
+
+                    if (lookupName && await SessionsService.LastNameAsync(db, (ulong)ban.SteamId64).ConfigureAwait(false) is { } name)
+                    {
+                        ban.PlayerName = name;
+                        display = $"{name} ({display})";
+                    }
+
                     ban.Id = Convert.ToInt64(await db.InsertAsync(ban).ConfigureAwait(false));
                     stored = true;
                 }
@@ -358,11 +375,17 @@ public sealed partial class BansService : IBansManager, IDisposable
         {
             var address = Net.NormalizeIp(ip);
             var withPort = address + ":";
-            bans = await db.SelectAsync<Ban>(b =>
-                b.BanType == BanType.IP
-                && (b.PlayerIp == address || b.PlayerIp.StartsWith(withPort))
-                && (b.ExpiresAt == 0 || b.ExpiresAt > now)
-                && (b.Server == guid || b.GlobalBan == true)).ConfigureAwait(false);
+            bans = _config.GlobalBansMatchIp
+                ? await db.SelectAsync<Ban>(b =>
+                    (b.BanType == BanType.IP || b.GlobalBan == true)
+                    && (b.PlayerIp == address || b.PlayerIp.StartsWith(withPort))
+                    && (b.ExpiresAt == 0 || b.ExpiresAt > now)
+                    && (b.Server == guid || b.GlobalBan == true)).ConfigureAwait(false)
+                : await db.SelectAsync<Ban>(b =>
+                    b.BanType == BanType.IP
+                    && (b.PlayerIp == address || b.PlayerIp.StartsWith(withPort))
+                    && (b.ExpiresAt == 0 || b.ExpiresAt > now)
+                    && (b.Server == guid || b.GlobalBan == true)).ConfigureAwait(false);
         }
 
         return [.. bans];
@@ -407,12 +430,18 @@ public sealed partial class BansService : IBansManager, IDisposable
                 b.BanType == BanType.SteamID && b.SteamId64 == steamId64
                 && (b.ExpiresAt == 0 || b.ExpiresAt > now)
                 && (b.Server == guid || b.GlobalBan == true)).ConfigureAwait(false)
-            : await db.SelectAsync<Ban>(b =>
-                ((b.BanType == BanType.SteamID && b.SteamId64 == steamId64) || (b.BanType == BanType.IP && (b.PlayerIp == address || b.PlayerIp.StartsWith(withPort))))
-                && (b.ExpiresAt == 0 || b.ExpiresAt > now)
-                && (b.Server == guid || b.GlobalBan == true)).ConfigureAwait(false);
+            : _config.GlobalBansMatchIp
+                ? await db.SelectAsync<Ban>(b =>
+                    ((b.BanType == BanType.SteamID && b.SteamId64 == steamId64) || ((b.BanType == BanType.IP || b.GlobalBan == true) && (b.PlayerIp == address || b.PlayerIp.StartsWith(withPort))))
+                    && (b.ExpiresAt == 0 || b.ExpiresAt > now)
+                    && (b.Server == guid || b.GlobalBan == true)).ConfigureAwait(false)
+                : await db.SelectAsync<Ban>(b =>
+                    ((b.BanType == BanType.SteamID && b.SteamId64 == steamId64) || (b.BanType == BanType.IP && (b.PlayerIp == address || b.PlayerIp.StartsWith(withPort))))
+                    && (b.ExpiresAt == 0 || b.ExpiresAt > now)
+                    && (b.Server == guid || b.GlobalBan == true)).ConfigureAwait(false);
 
-        return bans.OrderBy(b => b.BanType).FirstOrDefault();
+        // The player's own ban first, then one reaching them through their address.
+        return bans.OrderByDescending(b => b.BanType == BanType.SteamID && b.SteamId64 == steamId64).ThenBy(b => b.BanType).FirstOrDefault();
     }
 
     public async Task<IBan> AddBanAsync(IBan ban)

@@ -6,6 +6,7 @@ using Admins.Models;
 using Admins.Services.Access;
 using Admins.Services.Presence;
 using Admins.Services.Server;
+using Admins.Services.Sessions;
 using Admins.Shared;
 using Dommel;
 using Microsoft.Extensions.Logging;
@@ -314,14 +315,15 @@ public sealed partial class CommsService : ICommsManager, IDisposable
     /// Sanctions a SteamID64 or an IP address as given, applying it to whoever on the server it matches. Game thread; the
     /// caller has already checked immunity.
     /// </summary>
-    /// <param name="name">The player's last known name, when there is one.</param>
+    /// <param name="name">The player's last known name. Without one, a SteamID sanction takes the name of their latest session.</param>
     public void SanctionOffline(Issuer issuer, ulong steamId64, string? ip, CommsAction action, SanctionType type, TimeSpan duration, string reason, bool global, string? name = null)
     {
         var address = Net.NormalizeIp(ip);
         var id = type == SanctionType.IP ? address : steamId64.ToString();
         var known = !string.IsNullOrWhiteSpace(name);
+        var sanctions = Create(issuer, (long)steamId64, known ? name! : "Unknown", address, action, type, duration, reason, global);
 
-        Store(issuer, Create(issuer, (long)steamId64, known ? name! : "Unknown", address, action, type, duration, reason, global), action, known ? $"{name} ({id})" : id);
+        Store(issuer, sanctions, action, known ? $"{name} ({id})" : id, lookupName: !known && type == SanctionType.SteamID && steamId64 != 0);
     }
 
     private List<Sanction> Create(Issuer issuer, long steamId64, string name, string ip, CommsAction action, SanctionType type, TimeSpan duration, string reason, bool global)
@@ -351,7 +353,7 @@ public sealed partial class CommsService : ICommsManager, IDisposable
     }
 
     // Applies in memory even when storing fails, so the player is silenced for the rest of the session.
-    private void Store(Issuer issuer, List<Sanction> sanctions, CommsAction action, string display)
+    private void Store(Issuer issuer, List<Sanction> sanctions, CommsAction action, string display, bool lookupName = false)
     {
         _ = Task.Run(async () =>
         {
@@ -362,6 +364,13 @@ public sealed partial class CommsService : ICommsManager, IDisposable
                 try
                 {
                     using var db = _database.Connect();
+
+                    if (lookupName && await SessionsService.LastNameAsync(db, (ulong)sanctions[0].SteamId64).ConfigureAwait(false) is { } name)
+                    {
+                        foreach (var sanction in sanctions) sanction.PlayerName = name;
+                        display = $"{name} ({display})";
+                    }
+
                     foreach (var sanction in sanctions)
                     {
                         sanction.Id = Convert.ToInt64(await db.InsertAsync(sanction).ConfigureAwait(false));
@@ -517,12 +526,25 @@ public sealed partial class CommsService : ICommsManager, IDisposable
         var now = AdminsDatabase.NowMs;
         var guid = _server.Guid;
 
+        // One query per case, so no IN list is ever empty.
         using var db = _database.Connect();
-        var rows = await db.SelectAsync<Sanction>(s =>
-            (steamIds.Contains(s.SteamId64) || (s.SanctionType == SanctionType.IP && ips.Contains(s.PlayerIp)))
-            && kindList.Contains(s.SanctionKind)
-            && (s.ExpiresAt == 0 || s.ExpiresAt > now)
-            && (s.Server == guid || s.GlobalSanction == true)).ConfigureAwait(false);
+        var rows = ips.Count == 0
+            ? await db.SelectAsync<Sanction>(s =>
+                steamIds.Contains(s.SteamId64)
+                && kindList.Contains(s.SanctionKind)
+                && (s.ExpiresAt == 0 || s.ExpiresAt > now)
+                && (s.Server == guid || s.GlobalSanction == true)).ConfigureAwait(false)
+            : steamIds.Count == 0
+                ? await db.SelectAsync<Sanction>(s =>
+                    s.SanctionType == SanctionType.IP && ips.Contains(s.PlayerIp)
+                    && kindList.Contains(s.SanctionKind)
+                    && (s.ExpiresAt == 0 || s.ExpiresAt > now)
+                    && (s.Server == guid || s.GlobalSanction == true)).ConfigureAwait(false)
+                : await db.SelectAsync<Sanction>(s =>
+                    (steamIds.Contains(s.SteamId64) || (s.SanctionType == SanctionType.IP && ips.Contains(s.PlayerIp)))
+                    && kindList.Contains(s.SanctionKind)
+                    && (s.ExpiresAt == 0 || s.ExpiresAt > now)
+                    && (s.Server == guid || s.GlobalSanction == true)).ConfigureAwait(false);
 
         return [.. rows];
     }

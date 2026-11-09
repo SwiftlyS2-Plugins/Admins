@@ -17,6 +17,7 @@ public static class AdminMenuIds
     public const string PlayerControl = "admins.players.player.control";
     public const string PlayerMove = "admins.players.player.move";
     public const string PlayerHistory = "admins.players.player.history";
+    public const string PlayerSessions = "admins.players.player.sessions";
     public const string PlayerTeam = "admins.players.team";
     public const string PlayerHealth = "admins.players.health";
     public const string PlayerMoney = "admins.players.money";

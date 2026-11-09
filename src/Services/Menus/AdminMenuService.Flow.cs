@@ -41,6 +41,9 @@ public sealed partial class AdminMenuService
         /// <summary>The page shown once it is issued; null closes the menu.</summary>
         public IMenu? LandOn { get; init; }
 
+        /// <summary>The player it was started from when they have no SteamID to hold it, so someone else has to be picked.</summary>
+        public string? StartedFrom { get; set; }
+
         /// <summary>The ban or sanction whose length is being changed, instead of issuing a new one.</summary>
         public object? Record { get; init; }
 
@@ -193,6 +196,7 @@ public sealed partial class AdminMenuService
         var kick = draft.Kind == Punishment.Kick;
         var (builder, page) = NewPage(FlowId(draft, AdminFlowSteps.Target), T(viewer, draft.PicksKind ? "menu.pick.title_comms" : $"menu.pick.title_{Key(draft.Kind)}"));
         AddWarnings(builder, viewer, draft);
+        builder.AddHeader(Line(_ => T(viewer, "menu.flow.warn_no_steamid", draft.StartedFrom ?? string.Empty), _ => draft.StartedFrom is not null, WarnStyle));
         builder.AddHeader(Line(_ => T(viewer, "menu.players.empty"), _ => page.Rows.Count == 0));
 
         var rules = kick
