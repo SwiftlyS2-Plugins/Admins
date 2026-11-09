@@ -21,8 +21,8 @@ public sealed class CommsConfiguration
         "Music in voice",
     ];
 
-    [Description("Durations offered by the gag/mute menu, in seconds. 0 is permanent.")]
-    public List<int> DurationsInSeconds { get; set; } = [0, 300, 600, 900, 1800, 3600, 7200, 21600, 43200, 86400, 172800, 604800, 1209600];
+    [Description("Durations offered by the gag/mute menu, in seconds. 0 is permanent. The menu lists them shortest first with permanent last, and any length can also be typed.")]
+    public List<int> DurationsInSeconds { get; set; } = [1800, 3600, 21600, 86400, 604800, 2592000, 0];
 
     [Description("Team-chat messages starting with AdminChatStartCharacter are sent to every player with 'admins.chat' instead of the team.")]
     public bool EnableAdminChat { get; set; } = true;

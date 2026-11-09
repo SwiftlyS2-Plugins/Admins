@@ -52,6 +52,7 @@ public sealed class AdminsPlugin(ISwiftlyCore core) : BasePlugin(core)
             .AddSingleton<ServerControlService>()
             .AddSingleton<VotesService>()
             .AddSingleton<RecordNotifier>()
+            .AddSingleton<RecentPlayers>()
             .AddSingleton<AdminMenuService>()
             .AddOptionsWithValidateOnStart<Configuration>()
             // The binder appends file entries to list initializers, so empty them first or every default shows twice.
@@ -61,6 +62,8 @@ public sealed class AdminsPlugin(ISwiftlyCore core) : BasePlugin(core)
                 c.Bans.DurationsInSeconds.Clear();
                 c.Comms.Reasons.Clear();
                 c.Comms.DurationsInSeconds.Clear();
+                c.Kick.Reasons.Clear();
+                c.Server.Maps.Clear();
                 c.Status.Header.Clear();
                 c.Status.Footer.Clear();
             })
@@ -86,6 +89,7 @@ public sealed class AdminsPlugin(ISwiftlyCore core) : BasePlugin(core)
         _services.GetRequiredService<ServerControlService>();
         _services.GetRequiredService<VotesService>();
         _services.GetRequiredService<RecordNotifier>();
+        _services.GetRequiredService<RecentPlayers>();
         _services.GetRequiredService<AdminMenuService>();
     }
 

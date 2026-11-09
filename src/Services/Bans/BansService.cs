@@ -1,3 +1,4 @@
+using System.Linq.Expressions;
 using Admins.Contract;
 using Admins.Database;
 using Admins.Database.Models;
@@ -206,12 +207,14 @@ public sealed partial class BansService : IBansManager, IDisposable
     /// <summary>
     /// Bans a SteamID64 or IP that is not on the server. Game thread; the caller has already checked immunity.
     /// </summary>
-    public void BanOffline(Issuer issuer, ulong steamId64, string? ip, BanType type, TimeSpan duration, string reason, bool global)
+    /// <param name="name">The player's last known name, when there is one.</param>
+    public void BanOffline(Issuer issuer, ulong steamId64, string? ip, BanType type, TimeSpan duration, string reason, bool global, string? name = null)
     {
         var address = Net.NormalizeIp(ip);
-        var display = type == BanType.IP ? address : steamId64.ToString();
+        var id = type == BanType.IP ? address : steamId64.ToString();
+        var known = !string.IsNullOrWhiteSpace(name);
 
-        Store(issuer, NewBan(issuer, (long)steamId64, "Unknown", address, type, duration, reason, global), display);
+        Store(issuer, NewBan(issuer, (long)steamId64, known ? name! : "Unknown", address, type, duration, reason, global), known ? $"{name} ({id})" : id);
     }
 
     private Ban NewBan(Issuer issuer, long steamId64, string name, string ip, BanType type, TimeSpan duration, string reason, bool global)
@@ -272,18 +275,43 @@ public sealed partial class BansService : IBansManager, IDisposable
     }
 
     /// <summary>
-    /// Active bans that apply to this server, newest first.
+    /// Bans that apply to this server, newest first.
     /// </summary>
-    public async Task<IReadOnlyList<Ban>> ListActiveAsync(int limit)
+    public async Task<IReadOnlyList<Ban>> ListAsync(RecordStatus status, int limit)
     {
         if (!_database.Enabled) return [];
 
+        using var db = _database.Connect();
+        var bans = await db.FromAsync<Ban>(q => q.Select().Where(Here(status)).OrderByDescending(b => b.Id).Page(1, limit)).ConfigureAwait(false);
+        return [.. bans];
+    }
+
+    /// <summary>
+    /// How many bans that apply to this server are active, and how many have ended.
+    /// </summary>
+    public async Task<(int Active, int Expired)> CountAsync()
+    {
+        if (!_database.Enabled) return (0, 0);
+
+        using var db = _database.Connect();
+        var active = await db.CountAsync(Here(RecordStatus.Active)).ConfigureAwait(false);
+        var expired = await db.CountAsync(Here(RecordStatus.Expired)).ConfigureAwait(false);
+        return ((int)active, (int)expired);
+    }
+
+    public bool AppliesHere(Ban ban) => ban.GlobalBan || ban.Server == _server.Guid;
+
+    private Expression<Func<Ban, bool>> Here(RecordStatus status)
+    {
         var now = AdminsDatabase.NowMs;
         var guid = _server.Guid;
 
-        using var db = _database.Connect();
-        var bans = await db.SelectAsync<Ban>(b => (b.ExpiresAt == 0 || b.ExpiresAt > now) && (b.Server == guid || b.GlobalBan == true)).ConfigureAwait(false);
-        return [.. bans.OrderByDescending(b => b.Id).Take(limit)];
+        return status switch
+        {
+            RecordStatus.Active => b => (b.ExpiresAt == 0 || b.ExpiresAt > now) && (b.Server == guid || b.GlobalBan == true),
+            RecordStatus.Expired => b => b.ExpiresAt != 0 && b.ExpiresAt <= now && (b.Server == guid || b.GlobalBan == true),
+            _ => b => b.Server == guid || b.GlobalBan == true,
+        };
     }
 
     /// <summary>

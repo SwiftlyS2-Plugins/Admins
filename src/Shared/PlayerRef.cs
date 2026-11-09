@@ -25,5 +25,7 @@ public sealed class MenuShortcuts
 {
     public Action<IPlayer, Contract.BanType, bool>? OpenBan { get; set; }
 
-    public Action<IPlayer, Services.Comms.CommsAction, bool>? OpenComms { get; set; }
+    public Action<IPlayer, Services.Comms.CommsAction, Contract.SanctionType, bool>? OpenComms { get; set; }
+
+    public Action<IPlayer>? OpenKick { get; set; }
 }

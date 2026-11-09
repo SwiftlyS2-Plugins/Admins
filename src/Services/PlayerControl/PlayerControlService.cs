@@ -34,19 +34,21 @@ public sealed partial class PlayerControlService : IDisposable
     private readonly AccessService _access;
     private readonly Messenger _messenger;
     private readonly TargetResolver _targets;
+    private readonly MenuShortcuts _shortcuts;
 
     // Game thread only, keyed by slot.
     private readonly Dictionary<int, (ulong SessionId, CancellationTokenSource Timer)> _beacons = [];
     private readonly Dictionary<int, (ulong SessionId, CancellationTokenSource Timer)> _drugs = [];
     private readonly Dictionary<int, (ulong SessionId, Vector Position)> _deathPositions = [];
 
-    public PlayerControlService(ISwiftlyCore core, ILogger<PlayerControlService> logger, AccessService access, Messenger messenger, TargetResolver targets)
+    public PlayerControlService(ISwiftlyCore core, ILogger<PlayerControlService> logger, AccessService access, Messenger messenger, TargetResolver targets, MenuShortcuts shortcuts)
     {
         _core = core;
         _logger = logger;
         _access = access;
         _messenger = messenger;
         _targets = targets;
+        _shortcuts = shortcuts;
 
         core.Registrator.Register(this);
     }

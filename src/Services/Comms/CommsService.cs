@@ -1,3 +1,4 @@
+using System.Linq.Expressions;
 using Admins.Contract;
 using Admins.Database;
 using Admins.Database.Models;
@@ -312,12 +313,14 @@ public sealed partial class CommsService : ICommsManager, IDisposable
     /// <summary>
     /// Sanctions a SteamID64 or IP that is not on the server. Game thread; the caller has already checked immunity.
     /// </summary>
-    public void SanctionOffline(Issuer issuer, ulong steamId64, string? ip, CommsAction action, SanctionType type, TimeSpan duration, string reason, bool global)
+    /// <param name="name">The player's last known name, when there is one.</param>
+    public void SanctionOffline(Issuer issuer, ulong steamId64, string? ip, CommsAction action, SanctionType type, TimeSpan duration, string reason, bool global, string? name = null)
     {
         var address = Net.NormalizeIp(ip);
-        var display = type == SanctionType.IP ? address : steamId64.ToString();
+        var id = type == SanctionType.IP ? address : steamId64.ToString();
+        var known = !string.IsNullOrWhiteSpace(name);
 
-        Store(issuer, Create(issuer, (long)steamId64, "Unknown", address, action, type, duration, reason, global), action, display);
+        Store(issuer, Create(issuer, (long)steamId64, known ? name! : "Unknown", address, action, type, duration, reason, global), action, known ? $"{name} ({id})" : id);
     }
 
     private List<Sanction> Create(Issuer issuer, long steamId64, string name, string ip, CommsAction action, SanctionType type, TimeSpan duration, string reason, bool global)
@@ -453,18 +456,54 @@ public sealed partial class CommsService : ICommsManager, IDisposable
     }
 
     /// <summary>
-    /// Active sanctions that apply to this server, newest first.
+    /// Sanctions that apply to this server, newest first, optionally of one kind.
     /// </summary>
-    public async Task<IReadOnlyList<Sanction>> ListActiveAsync(int limit)
+    public async Task<IReadOnlyList<Sanction>> ListAsync(RecordStatus status, SanctionKind? kind, int limit)
     {
         if (!_database.Enabled) return [];
 
+        using var db = _database.Connect();
+        var rows = await db.FromAsync<Sanction>(q => q.Select().Where(Here(status, kind)).OrderByDescending(s => s.Id).Page(1, limit)).ConfigureAwait(false);
+        return [.. rows];
+    }
+
+    /// <summary>
+    /// How many sanctions that apply to this server are active, and how many have ended.
+    /// </summary>
+    public async Task<(int Active, int Expired)> CountAsync(SanctionKind? kind)
+    {
+        if (!_database.Enabled) return (0, 0);
+
+        using var db = _database.Connect();
+        var active = await db.CountAsync(Here(RecordStatus.Active, kind)).ConfigureAwait(false);
+        var expired = await db.CountAsync(Here(RecordStatus.Expired, kind)).ConfigureAwait(false);
+        return ((int)active, (int)expired);
+    }
+
+    public bool AppliesHere(Sanction sanction) => sanction.GlobalSanction || sanction.Server == _server.Guid;
+
+    // Spelled out per case: a nullable kind folded into one predicate is not something Dommel can translate.
+    private Expression<Func<Sanction, bool>> Here(RecordStatus status, SanctionKind? kind)
+    {
         var now = AdminsDatabase.NowMs;
         var guid = _server.Guid;
 
-        using var db = _database.Connect();
-        var rows = await db.SelectAsync<Sanction>(s => (s.ExpiresAt == 0 || s.ExpiresAt > now) && (s.Server == guid || s.GlobalSanction == true)).ConfigureAwait(false);
-        return [.. rows.OrderByDescending(s => s.Id).Take(limit)];
+        if (kind is not { } k)
+        {
+            return status switch
+            {
+                RecordStatus.Active => s => (s.ExpiresAt == 0 || s.ExpiresAt > now) && (s.Server == guid || s.GlobalSanction == true),
+                RecordStatus.Expired => s => s.ExpiresAt != 0 && s.ExpiresAt <= now && (s.Server == guid || s.GlobalSanction == true),
+                _ => s => s.Server == guid || s.GlobalSanction == true,
+            };
+        }
+
+        return status switch
+        {
+            RecordStatus.Active => s => s.SanctionKind == k && (s.ExpiresAt == 0 || s.ExpiresAt > now) && (s.Server == guid || s.GlobalSanction == true),
+            RecordStatus.Expired => s => s.SanctionKind == k && s.ExpiresAt != 0 && s.ExpiresAt <= now && (s.Server == guid || s.GlobalSanction == true),
+            _ => s => s.SanctionKind == k && (s.Server == guid || s.GlobalSanction == true),
+        };
     }
 
     private async Task<IReadOnlyList<Sanction>> FindApplicableActiveAsync(IReadOnlyList<(ulong SteamId, string Ip)> subjects, IReadOnlyList<SanctionKind> kinds)

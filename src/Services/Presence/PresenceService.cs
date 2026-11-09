@@ -1,4 +1,5 @@
 using Admins.Models;
+using Admins.Services.Access;
 using Admins.Shared;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -22,17 +23,19 @@ public sealed class PresenceService : IDisposable
     private readonly ILogger<PresenceService> _logger;
     private readonly IOptionsMonitor<Configuration> _config;
     private readonly Messenger _messenger;
+    private readonly AccessService _access;
 
     // A leave is only announced for a join that was; put-in-server also repeats on every map change.
     private readonly Dictionary<int, ulong> _present = [];
     private readonly Dictionary<int, Hidden> _hidden = [];
 
-    public PresenceService(ISwiftlyCore core, ILogger<PresenceService> logger, IOptionsMonitor<Configuration> config, Messenger messenger)
+    public PresenceService(ISwiftlyCore core, ILogger<PresenceService> logger, IOptionsMonitor<Configuration> config, Messenger messenger, AccessService access)
     {
         _core = core;
         _logger = logger;
         _config = config;
         _messenger = messenger;
+        _access = access;
 
         core.Registrator.Register(this);
 
@@ -62,6 +65,14 @@ public sealed class PresenceService : IDisposable
     private bool ConnectMessages => _config.CurrentValue.Presence.ConnectMessages;
 
     public bool IsHidden(IPlayer player) => _hidden.TryGetValue(player.Slot, out var hidden) && hidden.SessionId == player.SessionId;
+
+    /// <summary>
+    /// Whether <paramref name="viewer"/> is shown <paramref name="hidden"/>, marked as hidden: only other admins are.
+    /// The hidden admin is left out of their own lists too, so they see what players see.
+    /// </summary>
+    public bool CanSeeHidden(IPlayer viewer, IPlayer hidden) =>
+        viewer.SessionId != hidden.SessionId
+        && (_access.GetAdmin(viewer) is not null || _core.Permission.PlayerHasPermission(viewer.SteamID, "admins.commands.hide"));
 
     #region Commands
 

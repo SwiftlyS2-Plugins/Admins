@@ -97,7 +97,7 @@ public sealed partial class CommsService
 
         if (args.Length == 0 && issuer.Player is { } viewer && _shortcuts.OpenComms is { } open)
         {
-            open(viewer, action, global);
+            open(viewer, action, type, global);
             return;
         }
 
@@ -208,7 +208,8 @@ public sealed partial class CommsService
     /// <summary>
     /// Lifts the active sanctions of a kind for the given players. Game thread.
     /// </summary>
-    public void Lift(Issuer issuer, IReadOnlyList<(ulong SteamId, string Ip)> subjects, CommsAction action, string display)
+    /// <param name="completed">Runs on the game thread once the lift succeeded; not on failure.</param>
+    public void Lift(Issuer issuer, IReadOnlyList<(ulong SteamId, string Ip)> subjects, CommsAction action, string display, Action? completed = null)
     {
         var kinds = KindsOf(action);
 
@@ -222,6 +223,7 @@ public sealed partial class CommsService
 
             Forget(cached);
             Report(issuer, action, cached, display);
+            completed?.Invoke();
             return;
         }
 
@@ -234,6 +236,7 @@ public sealed partial class CommsService
                 _core.Scheduler.NextTick(() =>
                 {
                     if (_messenger.IsConnected(issuer)) Report(issuer, action, rows, display);
+                    completed?.Invoke();
                 });
             }
             catch (Exception ex)

@@ -4,7 +4,9 @@ using Admins.Services.Access;
 using Admins.Services.Bans;
 using Admins.Services.Comms;
 using Admins.Services.Esp;
+using Admins.Services.PlayerControl;
 using Admins.Services.Presence;
+using Admins.Services.ServerControl;
 
 namespace Admins.Models;
 
@@ -27,6 +29,10 @@ public sealed class Configuration
     public BansConfiguration Bans { get; set; } = new();
 
     public CommsConfiguration Comms { get; set; } = new();
+
+    public KickConfiguration Kick { get; set; } = new();
+
+    public ServerControlConfiguration Server { get; set; } = new();
 
     public PresenceConfiguration Presence { get; set; } = new();
 

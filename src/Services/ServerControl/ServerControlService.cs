@@ -11,8 +11,12 @@ public sealed class ServerControlService
 {
     private const float MapChangeDelaySeconds = 3f;
 
+    // Long enough to cover the delay and the changelevel; a change that never happens (bad workshop id) stops blocking after it.
+    private const long MapChangePendingMs = 15_000;
+
     private readonly ISwiftlyCore _core;
     private readonly Messenger _messenger;
+    private long _mapChangeUntil;
 
     public ServerControlService(ISwiftlyCore core, Messenger messenger)
     {
@@ -105,6 +109,17 @@ public sealed class ServerControlService
         _messenger.Broadcast("command.restartround", issuer.Name, delay);
     }
 
+    public bool MapChangePending => Environment.TickCount64 < _mapChangeUntil;
+
+    /// <summary>
+    /// Whether <paramref name="map"/> names an installed map or a workshop map (<c>ws:&lt;id|name&gt;</c>).
+    /// </summary>
+    public bool IsKnownMap(string map)
+    {
+        var name = map.Trim();
+        return name.StartsWith("ws:", StringComparison.OrdinalIgnoreCase) ? name.Length > 3 : name.Length > 0 && _core.Engine.IsMapValid(name);
+    }
+
     /// <summary>
     /// Changes the map after a short delay. <c>ws:&lt;id&gt;</c> or <c>ws:&lt;name&gt;</c> selects a workshop map.
     /// </summary>
@@ -112,6 +127,12 @@ public sealed class ServerControlService
     {
         var name = map.Trim();
         string command;
+
+        if (MapChangePending)
+        {
+            _messenger.Reply(issuer, "command.map_pending");
+            return false;
+        }
 
         if (name.StartsWith("ws:", StringComparison.OrdinalIgnoreCase))
         {
@@ -136,6 +157,7 @@ public sealed class ServerControlService
         }
 
         _messenger.Broadcast("command.changing_map", issuer.Name, name);
+        _mapChangeUntil = Environment.TickCount64 + MapChangePendingMs;
         _core.Scheduler.DelayBySeconds(MapChangeDelaySeconds, () => _core.Engine.ExecuteCommand(command));
         return true;
     }

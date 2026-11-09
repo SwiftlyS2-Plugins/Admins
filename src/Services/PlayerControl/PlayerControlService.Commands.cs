@@ -11,6 +11,12 @@ public sealed partial class PlayerControlService
     [Command("kick", permission: "admins.commands.kick")]
     public void KickCommand(ICommandContext context)
     {
+        if (context.Args.Length == 0 && context.Sender is { } viewer && _shortcuts.OpenKick is { } open)
+        {
+            open(viewer);
+            return;
+        }
+
         if (!Begin(context, "kick", "<player> [reason]", 1, out var issuer, out var args)) return;
 
         var reason = args.Length > 1 ? string.Join(' ', args.Skip(1)) : null;

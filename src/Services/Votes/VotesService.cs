@@ -14,7 +14,13 @@ namespace Admins.Services.Votes;
 
 public sealed class VotesService : IDisposable
 {
+    public const string BallotMenuId = "admins.vote";
+
     private const int VoteSeconds = 30;
+    private const string Permission = "admins.commands.vote";
+
+    // The ballot opens unasked, often while the player is pressing E in another menu.
+    private const long BallotGuardMs = 750;
 
     private readonly ISwiftlyCore _core;
     private readonly ILogger<VotesService> _logger;
@@ -40,21 +46,35 @@ public sealed class VotesService : IDisposable
 
     private sealed class Vote
     {
-        public required IMenu Menu { get; init; }
         public required CancellationTokenSource Timer { get; init; }
+        public required Func<IPlayer?, string> Title { get; init; }
         public required int OptionCount { get; init; }
         public required Func<IPlayer?, int, string> OptionText { get; init; }
         public required HashSet<int> Electorate { get; init; }
         public required Action<int?> OnFinished { get; init; }
         public Dictionary<int, int> Ballots { get; } = [];
+        public Dictionary<int, IMenu> Menus { get; } = [];
         public int SecondsLeft { get; set; } = VoteSeconds;
     }
 
-    [Command("vote", permission: "admins.commands.vote")]
+    // Anyone may reopen their ballot; starting a vote needs the permission.
+    [Command("vote")]
     public void VoteCommand(ICommandContext context)
     {
         var issuer = Issuer.From(context);
         var args = context.Args;
+
+        if (args.Length == 0 && issuer.Player is { } voter && _vote is { } running)
+        {
+            Reopen(running, voter);
+            return;
+        }
+
+        if (issuer.Player is { } player && !_core.Permission.PlayerHasPermission(player.SteamID, Permission))
+        {
+            _messenger.Reply(issuer, args.Length == 0 ? "vote.none" : "command.no_permission");
+            return;
+        }
 
         if (args.Length < 3)
         {
@@ -157,11 +177,59 @@ public sealed class VotesService : IDisposable
             return;
         }
 
-        var builder = _core.Menu.CreateMenu("admins.vote")
-            .WithTitle(_messenger.Text(null, "vote.menu_title"))
-            .AddHeader(new TextComponent { TextProvider = s => _messenger.Text(s.Player, "vote.header", title(s.Player), _vote?.SecondsLeft ?? 0) });
+        var vote = new Vote
+        {
+            Timer = _core.Scheduler.DelayAndRepeatBySeconds(1f, 1f, Tick),
+            Title = title,
+            OptionCount = optionCount,
+            OptionText = optionText,
+            Electorate = [.. voters.Select(p => p.Slot)],
+            OnFinished = onFinished,
+        };
 
-        for (var i = 0; i < optionCount; i++)
+        _vote = vote;
+
+        foreach (var voter in voters)
+        {
+            var options = string.Join(", ", Enumerable.Range(0, optionCount).Select(i => $"{i + 1}. {optionText(voter, i)}"));
+            _messenger.Chat(voter, "vote.started", issuer.Name, title(voter), options);
+            OpenBallot(vote, voter);
+        }
+    }
+
+    private void Reopen(Vote vote, IPlayer voter)
+    {
+        if (!vote.Electorate.Contains(voter.Slot))
+        {
+            _messenger.Chat(voter, "vote.not_eligible");
+            return;
+        }
+
+        if (vote.Ballots.ContainsKey(voter.Slot))
+        {
+            _messenger.Chat(voter, "vote.already_voted");
+            return;
+        }
+
+        OpenBallot(vote, voter);
+    }
+
+    // An admin interrupted mid-menu goes back to the same page after voting.
+    private void OpenBallot(Vote vote, IPlayer voter)
+    {
+        var current = _core.Menu.GetSession(voter)?.Menu;
+        if (current?.Id == BallotMenuId) current = current.Parent;
+
+        var parent = current is not null && current.Id.StartsWith("admins.", StringComparison.Ordinal) ? current : null;
+        var openedAt = 0L;
+
+        var builder = _core.Menu.CreateMenu(BallotMenuId)
+            .WithTitle(_messenger.Text(voter, "vote.menu_title"))
+            .AddHeader(new TextComponent { TextProvider = s => _messenger.Text(s.Player, "vote.header", vote.Title(s.Player), vote.SecondsLeft) });
+
+        if (parent is not null) builder.WithParent(parent);
+
+        for (var i = 0; i < vote.OptionCount; i++)
         {
             var index = i;
             builder.Add(new ButtonComponent(string.Empty, ctx =>
@@ -170,30 +238,16 @@ public sealed class VotesService : IDisposable
                 return ValueTask.CompletedTask;
             })
             {
-                TextProvider = s => optionText(s.Player, index),
+                TextProvider = s => vote.OptionText(s.Player, index),
+                Validating = _ => ValueTask.FromResult(Environment.TickCount64 - openedAt >= BallotGuardMs),
             });
         }
 
         var menu = builder.Build();
-        var vote = new Vote
-        {
-            Menu = menu,
-            Timer = _core.Scheduler.DelayAndRepeatBySeconds(1f, 1f, Tick),
-            OptionCount = optionCount,
-            OptionText = optionText,
-            Electorate = [.. voters.Select(p => p.Slot)],
-            OnFinished = onFinished,
-        };
+        menu.Opened += _ => openedAt = Environment.TickCount64;
 
-        _core.Scheduler.StopOnMapChange(vote.Timer);
-        _vote = vote;
-
-        foreach (var voter in voters)
-        {
-            var options = string.Join(", ", Enumerable.Range(0, optionCount).Select(i => $"{i + 1}. {optionText(voter, i)}"));
-            _messenger.Chat(voter, "vote.started", issuer.Name, title(voter), options);
-            menu.Open(voter);
-        }
+        vote.Menus[voter.Slot] = menu;
+        menu.Open(voter);
     }
 
     private void Cast(IMenuSession session, int option)
@@ -202,6 +256,7 @@ public sealed class VotesService : IDisposable
         if (_vote is not { } vote || !vote.Electorate.Contains(slot) || vote.Ballots.ContainsKey(slot)) return;
 
         vote.Ballots[slot] = option;
+        vote.Menus.Remove(slot);
         session.Close();
 
         // Deferred: closing every session from inside this menu's own action handler is not safe.
@@ -219,7 +274,10 @@ public sealed class VotesService : IDisposable
             return;
         }
 
-        foreach (var session in vote.Menu.Sessions) session.Invalidate();
+        foreach (var menu in vote.Menus.Values)
+        {
+            foreach (var session in menu.Sessions) session.Invalidate();
+        }
     }
 
     private void Finish(Vote vote)
@@ -228,7 +286,8 @@ public sealed class VotesService : IDisposable
 
         _vote = null;
         vote.Timer.Cancel();
-        vote.Menu.CloseAll();
+        foreach (var menu in vote.Menus.Values) menu.CloseAll();
+        vote.Menus.Clear();
 
         var tally = vote.Ballots.Values.GroupBy(v => v).ToDictionary(g => g.Key, g => g.Count());
         var total = vote.Ballots.Count;
@@ -266,15 +325,29 @@ public sealed class VotesService : IDisposable
     {
         if (_vote is not { } vote || !vote.Electorate.Remove(e.PlayerId)) return;
 
+        vote.Menus.Remove(e.PlayerId);
         if (vote.Electorate.All(vote.Ballots.ContainsKey)) Finish(vote);
     }
 
-    public void Dispose()
+    // A vote cannot carry over to the next map: its result would apply there (votemap, votekick) with a new electorate.
+    [EventListener<EventDelegates.OnMapUnload>]
+    public void OnMapUnload(IOnMapUnloadEvent e) => Cancel();
+
+    public void Dispose() => Cancel();
+
+    private void Cancel()
     {
         if (_vote is not { } vote) return;
 
         _vote = null;
         vote.Timer.Cancel();
-        vote.Menu.CloseAll();
+
+        foreach (var menu in vote.Menus.Values)
+        {
+            menu.Parent = null;
+            menu.CloseAll();
+        }
+
+        vote.Menus.Clear();
     }
 }

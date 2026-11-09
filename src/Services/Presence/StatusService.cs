@@ -49,10 +49,9 @@ public sealed partial class StatusService
         if (_core.PlayerManager.GetPlayer(slot) is not { IsFakeClient: false } viewer || viewer.SessionId != sessionId) return;
 
         var config = _config.CurrentValue.Status;
-        var seesHidden = _core.Permission.PlayerHasPermission(viewer.SteamID, "admins.commands.hide");
 
         var players = _core.PlayerManager.GetAllPlayers()
-            .Where(p => p.Controller is { IsValid: true, IsHLTV: false } && (seesHidden || !_presence.IsHidden(p)))
+            .Where(p => p.Controller is { IsValid: true, IsHLTV: false } && (!_presence.IsHidden(p) || _presence.CanSeeHidden(viewer, p)))
             .OrderBy(p => p.UserID)
             .ToList();
 
@@ -77,7 +76,7 @@ public sealed partial class StatusService
             var row = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
             {
                 ["userid"] = player.UserID.ToString(),
-                ["name"] = seesHidden && _presence.IsHidden(player) ? _messenger.Text(viewer, "status.hidden", name) : name,
+                ["name"] = _presence.IsHidden(player) ? _messenger.Text(viewer, "status.hidden", name) : name,
                 ["steamid"] = bot ? "BOT" : player.SteamID.ToString(),
                 ["duration"] = bot ? "BOT" : Clock(player.ConnectedTime),
                 ["ping"] = bot ? "0" : player.Controller.Ping.ToString(),
