@@ -1,4 +1,9 @@
+using Admins.Database;
+using Admins.Database.Models;
+using Admins.Services.Server;
 using Admins.Shared;
+using Dommel;
+using Microsoft.Extensions.Logging;
 using SwiftlyS2.Shared;
 using SwiftlyS2.Shared.Events;
 using SwiftlyS2.Shared.GameEventDefinitions;
@@ -10,7 +15,7 @@ namespace Admins.Services.Menus;
 
 /// <summary>
 /// Players who left in the last few minutes, so a player who leaves to dodge a punishment can still be punished from
-/// the menu. Kept in memory only. Game thread only.
+/// the menu. Kept in memory, and refilled from <c>player_sessions</c> when the plugin loads. Game thread only.
 /// </summary>
 public sealed class RecentPlayers
 {
@@ -21,13 +26,55 @@ public sealed class RecentPlayers
     private readonly Dictionary<int, (ulong SessionId, string Ip)> _ips = [];
     private readonly List<Entry> _entries = [];
 
-    public RecentPlayers(ISwiftlyCore core)
+    public RecentPlayers(ISwiftlyCore core, ILogger<RecentPlayers> logger, AdminsDatabase database, ServerService server)
     {
         _core = core;
         core.Registrator.Register(this);
+
+        if (database.Enabled) Load(logger, database, server.Guid);
     }
 
     public sealed record Entry(ulong SteamId, string Name, string Ip, DateTime LeftAt);
+
+    // A session still open was left so by a crash or an unload: it ended at its last heartbeat.
+    private void Load(ILogger logger, AdminsDatabase database, string guid)
+    {
+        var since = AdminsDatabase.NowMs - (long)Window.TotalMilliseconds;
+
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                using var db = database.Connect();
+                var rows = await db.FromAsync<PlayerSession>(q => q.Select()
+                    .Where(s => s.Server == guid && (s.DisconnectedAt >= since || (s.DisconnectedAt == 0 && s.LastSeenAt >= since)))
+                    .OrderByDescending(s => s.Id)
+                    .Page(1, Capacity * 4)).ConfigureAwait(false);
+
+                var loaded = rows
+                    .Select(s => new Entry((ulong)s.SteamId64, s.PlayerName, s.PlayerIp, DateTimeOffset.FromUnixTimeMilliseconds(s.DisconnectedAt != 0 ? s.DisconnectedAt : s.LastSeenAt).UtcDateTime))
+                    .ToList();
+
+                _core.Scheduler.NextTick(() => Merge(loaded));
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "Loading the players who recently left failed.");
+            }
+        });
+    }
+
+    // A leave seen since the plugin loaded is newer than the stored one of the same player.
+    private void Merge(IReadOnlyList<Entry> loaded)
+    {
+        foreach (var entry in loaded.OrderByDescending(e => e.LeftAt))
+        {
+            if (!_entries.Any(e => e.SteamId == entry.SteamId)) _entries.Add(entry);
+        }
+
+        _entries.Sort((a, b) => b.LeftAt.CompareTo(a.LeftAt));
+        if (_entries.Count > Capacity) _entries.RemoveRange(Capacity, _entries.Count - Capacity);
+    }
 
     [EventListener<EventDelegates.OnClientPutInServer>]
     public void OnClientPutInServer(IOnClientPutInServerEvent e)

@@ -1,3 +1,4 @@
+using Admins.Contract;
 using Admins.Services.Access;
 using Admins.Services.ServerControl;
 using Admins.Shared;
@@ -44,9 +45,12 @@ public sealed class VotesService : IDisposable
         core.Registrator.Register(this);
     }
 
-    private sealed class Vote
+    private sealed class Vote : IAdminVote
     {
         public required CancellationTokenSource Timer { get; init; }
+        public required AdminVoteKind Kind { get; init; }
+        public required string StartedBy { get; init; }
+        public AdminPlayerRow? Target { get; init; }
         public required Func<IPlayer?, string> Title { get; init; }
         public required int OptionCount { get; init; }
         public required Func<IPlayer?, int, string> OptionText { get; init; }
@@ -55,6 +59,17 @@ public sealed class VotesService : IDisposable
         public Dictionary<int, int> Ballots { get; } = [];
         public Dictionary<int, IMenu> Menus { get; } = [];
         public int SecondsLeft { get; set; } = VoteSeconds;
+
+        // A ballot outlives its voter leaving, and still counts when the vote ends.
+        public int Voters => Electorate.Count + Ballots.Keys.Count(slot => !Electorate.Contains(slot));
+
+        public int Voted => Ballots.Count;
+
+        public string Question(IPlayer? viewer) => Title(viewer);
+
+        public IReadOnlyList<string> Options(IPlayer? viewer) => [.. Enumerable.Range(0, OptionCount).Select(i => OptionText(viewer, i))];
+
+        public int Votes(int option) => Ballots.Values.Count(v => v == option);
     }
 
     // Anyone may reopen their ballot; starting a vote needs the permission.
@@ -85,7 +100,7 @@ public sealed class VotesService : IDisposable
         var question = args[0];
         var options = args.Skip(1).ToArray();
 
-        Start(issuer, _ => question, options.Length, (_, index) => options[index], _ => { });
+        Start(issuer, AdminVoteKind.Poll, null, _ => question, options.Length, (_, index) => options[index], _ => { });
     }
 
     [Command("votekick", permission: "admins.commands.votekick")]
@@ -119,6 +134,8 @@ public sealed class VotesService : IDisposable
         var reference = PlayerRef.Of(target);
         Start(
             issuer,
+            AdminVoteKind.Kick,
+            new AdminPlayerRow(reference.Slot, reference.SessionId, reference.SteamId, reference.Name),
             viewer => _messenger.Text(viewer, "vote.kick_title", reference.Name),
             2,
             (viewer, index) => _messenger.Text(viewer, index == 0 ? "yes" : "no"),
@@ -152,6 +169,8 @@ public sealed class VotesService : IDisposable
 
         Start(
             issuer,
+            AdminVoteKind.Map,
+            null,
             viewer => _messenger.Text(viewer, "vote.map_title"),
             maps.Length,
             (_, index) => maps[index],
@@ -162,7 +181,9 @@ public sealed class VotesService : IDisposable
     }
 
     /// <param name="onFinished">Receives the winning option, or null when nobody voted or the top options tie.</param>
-    private void Start(Issuer issuer, Func<IPlayer?, string> title, int optionCount, Func<IPlayer?, int, string> optionText, Action<int?> onFinished)
+    private void Start(
+        Issuer issuer, AdminVoteKind kind, AdminPlayerRow? target, Func<IPlayer?, string> title, int optionCount,
+        Func<IPlayer?, int, string> optionText, Action<int?> onFinished)
     {
         if (_vote is not null)
         {
@@ -180,6 +201,9 @@ public sealed class VotesService : IDisposable
         var vote = new Vote
         {
             Timer = _core.Scheduler.DelayAndRepeatBySeconds(1f, 1f, Tick),
+            Kind = kind,
+            StartedBy = issuer.Name,
+            Target = target,
             Title = title,
             OptionCount = optionCount,
             OptionText = optionText,
@@ -224,8 +248,8 @@ public sealed class VotesService : IDisposable
         var openedAt = 0L;
 
         var builder = _core.Menu.CreateMenu(BallotMenuId)
-            .WithTitle(_messenger.Text(voter, "vote.menu_title"))
-            .AddHeader(new TextComponent { TextProvider = s => _messenger.Text(s.Player, "vote.header", vote.Title(s.Player), vote.SecondsLeft) });
+            .WithTitle(vote.Title(voter))
+            .AddHeader(new TextComponent { TextProvider = s => _messenger.Text(s.Player, "vote.time_left", vote.SecondsLeft) });
 
         if (parent is not null) builder.WithParent(parent);
 
@@ -240,10 +264,12 @@ public sealed class VotesService : IDisposable
             {
                 TextProvider = s => vote.OptionText(s.Player, index),
                 Validating = _ => ValueTask.FromResult(Environment.TickCount64 - openedAt >= BallotGuardMs),
+                Tag = new AdminVoteOptionRow(index),
             });
         }
 
         var menu = builder.Build();
+        menu.Tag = vote;
         menu.Opened += _ => openedAt = Environment.TickCount64;
 
         vote.Menus[voter.Slot] = menu;

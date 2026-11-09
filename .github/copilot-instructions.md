@@ -44,6 +44,7 @@ src/
     Menus/                     AdminMenuService (one partial per area), RecentPlayers
     PlayerControl/             player actions shared by the commands and the menu
     Presence/                  join and leave messages, !hide, the status override
+    Sessions/                  player_sessions: one row per connection, and !sessions
     Esp/, Votes/, ServerControl/, Server/, Notifications/
   Shared/                      Messenger + Issuer, TargetResolver, PlayerRef + MenuShortcuts, Formatting
 resources/translations/        en.jsonc (the reference), pt-BR.jsonc
@@ -62,6 +63,15 @@ docs/                          API docs
   on those services and not the other way round.
 - `PlayerControlService` holds the player actions. Each checks immunity itself, replies to the
   issuer on failure and announces success, whether a command or the menu called it.
+- `TargetResolver` tries `@` selectors, `#userid`, then any SteamID form, then a name typed in full
+  or a bare user id, then a part of a name, both lowercased. Two matches at one step are ambiguous
+  and target nobody. The `ip` punishments skip it and take an address. Anything by IP, those commands
+  and the menu alike, is refused while anyone connected from the address is immune
+  (`TargetResolver.OnIp`). A SteamID with nobody online behind it is punished offline.
+- Entities kept past the call that spawned them are held as a `CHandle`: round cleanup removes
+  plugin entities, and a held wrapper checks only its address, which a new entity can take. The
+  beacon's beams are also marked changed (`*Updated()`) after `DispatchSpawn`, as every beam known
+  to draw is.
 
 ## Configuration
 
@@ -81,6 +91,8 @@ docs/                          API docs
   path checks it: reads return empty, updates and removes return, adds still act in memory.
 - Tables `servers`, `groups`, `admins`, `bans`, `sanctions` keep the split plugins' schema, so
   existing databases and web panels keep working. Never rename or retype a column.
+  `player_sessions` is this plugin's own (`20270215000000`); its name avoids the `sessions` table
+  web frameworks sharing the database tend to own.
 - Migrations `20270214103911`–`…918` reuse the split plugins' ids in the default `VersionInfo`
   ledger, which is what makes existing databases skip them. Never renumber or edit one. A new
   migration takes a new id, guards its create with `Schema.Table(...).Exists()`, and must run on
@@ -112,9 +124,10 @@ docs/                          API docs
 
 ## Threading
 
-- Game thread only: `AccessService._grants`, `CommsService`'s cache, the menu's `_viewers` and
-  `_open`, ESP, presence and votes. Per-player dictionaries are keyed by **slot** and checked
-  against `SessionId`, because the SteamID already reads 0 when the disconnect event fires.
+- Game thread only: `AccessService._grants`, `CommsService`'s cache, `SessionsService._tracked`, the
+  menu's `_viewers` and `_open`, ESP, presence and votes. Per-player dictionaries are keyed by
+  **slot** and checked against `SessionId`, because the SteamID already reads 0 when the disconnect
+  event fires.
 - Database work runs off the game thread (`Task.Run`, `ConfigureAwait(false)`) and comes back
   through `Core.Scheduler.NextTick`. Capture an `Issuer` on the game thread; after an await, check
   `Messenger.IsConnected(issuer)` before touching its player, or reply with `ReplyLater`.
@@ -136,6 +149,22 @@ docs/                          API docs
   player can still reach the admins.
 - Contract events are raised through `Raise`, which logs a throwing handler; the handlers after it
   in the delegate are skipped.
+
+## Sessions
+
+- `SessionsService` inserts a `player_sessions` row when Steam authorizes a player, backdated to
+  the connection, refreshes `LastSeenAt` and the name every 60 seconds, and sets `DisconnectedAt`
+  on disconnect. `DisconnectedAt = 0` is an open session.
+- All its writes go through one chain (`Enqueue`), in the order the game thread asked for them, so
+  an update never lands before its insert. A disposed instance drops what is still queued: after a
+  hot reload a late full-row update would reopen a row the new instance just closed.
+- On load it closes this server's open rows at their `LastSeenAt` (a crash or an unload left them),
+  so a hot reload splits a session with a gap of up to a minute. Retention deletes only this
+  server's rows; servers sharing the database may keep theirs longer.
+- The heartbeat also starts rows for players nobody tracks (a hot reload, recording turned on), and
+  closes every tracked row when recording is turned off.
+- `!sessions` reads off the game thread and prints on it. A row open with no heartbeat for 150
+  seconds is one a crash left; it shows as ended at `LastSeenAt`, not as online.
 
 ## Hiding, status and ESP
 
@@ -160,6 +189,9 @@ docs/                          API docs
 `VotesService` runs one vote at a time for 30 seconds. The electorate is fixed when it starts, a
 ballot that opens unasked ignores input for 750 ms, a tie keeps the player on a votekick, and a map
 change cancels the vote. An admin interrupted mid-menu goes back to the same page after voting.
+The ballot's title is the question in the voter's language, under a `vote.time_left` header; its
+menu `Tag` is the running vote (`IAdminVote`) and each answer's `AdminVoteOptionRow`, so a skin
+can draw who called it and the tally.
 
 ## Menus
 
@@ -172,10 +204,11 @@ change cancels the vote. An admin interrupted mid-menu goes back to the same pag
 | Every grouping is a submenu (`Link`); the body has no non-selectable label or section rows | Keyboard navigation; inline labels were rejected in-game |
 | The header holds only notices: empty, loading, failed, left the server, immune, warnings (`AddHeader(Line(...))`) | Same |
 | No label ends in `...` | Same |
-| No descriptive detail: team, alive, SteamID, K/D, ping, immunity, status lists, step counter, picks so far, record details, footer hints, SteamIDs beside names | Owner's rule: it belongs to the CustomHUD menus, built later |
-| Nothing is typed into a menu; a free value prints the chat command (`PrintUsage`) | Chat plugins that take messages first swallow typed input |
+| No descriptive detail: team, alive, SteamID, K/D, ping, immunity, status lists, step counter, picks so far, record details, footer hints, SteamIDs beside names | Owner's rule: CustomHUD's Admins pages draw it from the API and the tags below |
+| Nothing is typed into a menu; a free value prints the chat command (`PrintUsage`). In a punishment it is a step like any other (`Draft.InChat`): the flow goes on and its last step prints the command filled in with every pick (`FilledCommands`) | Chat plugins that take messages first swallow typed input; a command printed before the rest is picked leaves the admin to type it all |
+| A printed punishment names the player by SteamID64 (or IP when matched by IP), never `#userid`, and its length as one token (`CommandLength`). Live-only hints (rename, health, money) keep the shorter `#userid` | `TargetResolver` falls back from a stale `#userid` to a slot match, someone else, and a punishment must still reach a player who left; `Durations.Format` gives `1d 6h`, two arguments |
 | Rows that act at once take `Validating = page.Guard` | The second press of a double-tap must not pick on the page it opened |
-| Menu ids keep their prefixes: `admins.players`, `admins.bans`, `admins.comms`, `admins.bans.give`, `admins.comms.give` | CustomHUD's `LockerProfiles.Admins()` picks its mouse views by them |
+| Page ids are `AdminMenuIds` constants; every row carries an `Admins.Contract` record as its component `Tag` (`AdminMenuRows.cs`) and every page its subject as the menu `Tag` (`AdminMenuViews.cs`) | CustomHUD's `LockerProfiles.Admins()` picks its mouse views by id, and its Admins integration draws each row from its tag; a row without one draws plain |
 
 - Pages are built per viewer, filtered by permission, and opened as submenus of the page they were
   picked from, so Tab always goes back one page. `!admin <player>` builds the same parent chain.
@@ -186,7 +219,7 @@ change cancels the vote. An admin interrupted mid-menu goes back to the same pag
 - Open sessions are invalidated every second so live state (alive, time left, toggles) refreshes.
 - `Row` and `Link` turn A / D into five-row jumps.
 - `ViewerState` (slot and session) remembers the last reason and length per punishment kind;
-  `RecentPlayers` keeps up to 50 leavers for 15 minutes.
+  `RecentPlayers` keeps up to 50 leavers for 15 minutes, refilled from `player_sessions` on load.
 - Punishment rights are `CanPunish` / `CanLift`; `admins.menu.bans` and `admins.menu.comms` from the
   old menu plugin still grant local bans and comms.
 - `IAdminMenuAPI` entries come after the built-in ones. A throwing title drops the entry; a

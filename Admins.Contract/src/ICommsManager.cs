@@ -34,6 +34,12 @@ public interface ICommsManager
     /// </summary>
     Task RemoveSanctionAsync(ISanction sanction);
 
+    /// <summary>
+    /// Counts the sanctions of a kind (null: both) that apply to this server, as the Comms page shows them. Zero without
+    /// a database.
+    /// </summary>
+    Task<AdminRecordCounts> CountSanctionsAsync(SanctionKind? sanctionKind = null);
+
     event Action<ISanction>? OnAdminSanctionAdded;
     event Action<ISanction>? OnAdminSanctionUpdated;
     event Action<ISanction>? OnAdminSanctionRemoved;

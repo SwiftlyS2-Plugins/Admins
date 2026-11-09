@@ -57,15 +57,18 @@ public sealed class TargetResolver(ISwiftlyCore core)
             return Single(players.FirstOrDefault(p => p.UserID == id) ?? players.FirstOrDefault(p => p.Slot == id), out error);
         }
 
-        if (text.Length == 17 && text.All(char.IsAsciiDigit) && ulong.TryParse(text, out var steamId))
+        if (SteamIds.TryParse(text, out var steamId))
         {
             return Single(players.FirstOrDefault(p => p.SteamID == steamId), out error);
         }
 
-        var named = players.Select(p => (Player: p, Name: Names.Of(p))).ToList();
+        var lowered = text.ToLowerInvariant();
+        int? statusId = text.All(char.IsAsciiDigit) && int.TryParse(text, out var number) ? number : null;
+        var named = players.Select(p => (Player: p, Name: Names.Of(p).ToLowerInvariant())).ToList();
 
-        var exact = named.Where(n => string.Equals(n.Name, text, StringComparison.OrdinalIgnoreCase)).ToList();
-        var matches = exact.Count > 0 ? exact : named.Where(n => n.Name.Contains(text, StringComparison.OrdinalIgnoreCase)).ToList();
+        // A name typed in full, or the user id from status without its '#', beats a name that only contains the text.
+        var exact = named.Where(n => n.Name == lowered || n.Player.UserID == statusId).ToList();
+        var matches = exact.Count > 0 ? exact : named.Where(n => n.Name.Contains(lowered, StringComparison.Ordinal)).ToList();
 
         if (matches.Count > 1)
         {
@@ -75,6 +78,10 @@ public sealed class TargetResolver(ISwiftlyCore core)
 
         return Single(matches.Count == 1 ? matches[0].Player : null, out error);
     }
+
+    /// <summary>The humans connected from <paramref name="ip"/>, a normalized address.</summary>
+    public IReadOnlyList<IPlayer> OnIp(string ip) =>
+        [.. core.PlayerManager.GetAllPlayers().Where(p => !p.IsFakeClient && Net.NormalizeIp(p.IPAddress) == ip)];
 
     private static IReadOnlyList<IPlayer> Single(IPlayer? player, out TargetError error)
     {

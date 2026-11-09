@@ -16,6 +16,7 @@ using SwiftlyS2.Shared.Commands;
 using SwiftlyS2.Shared.Events;
 using SwiftlyS2.Shared.Menu;
 using SwiftlyS2.Shared.Players;
+using Punishment = Admins.Contract.AdminPunishment;
 
 namespace Admins.Services.Menus;
 
@@ -185,32 +186,14 @@ public sealed partial class AdminMenuService : IAdminMenuAPI, IDisposable
 
     public IMenu CreateAdminMenu(IPlayer viewer)
     {
-        var (builder, page) = NewPage("admins.main", T(viewer, "menu.title"));
-        var counts = new ActiveCounts();
-        var bans = _database.Enabled && BanListAvailable(viewer);
-        var comms = _database.Enabled && CommsListAvailable(viewer);
+        var (builder, page) = NewPage(AdminMenuIds.Root, T(viewer, "menu.title"));
 
-        var playersLink = Cached(string.Empty, () => PlayersPage(viewer));
-        playersLink.TextProvider = _ => T(viewer, "menu.root.players", Candidates(viewer, AnyPlayer).Count());
-        builder.Add(playersLink);
-
-        if (bans)
-        {
-            var link = Cached(string.Empty, () => BansPage(viewer));
-            link.TextProvider = _ => counts.Bans < 0 ? T(viewer, "menu.root.bans") : T(viewer, "menu.root.bans_count", counts.Bans);
-            builder.Add(link);
-        }
-
-        if (comms)
-        {
-            var link = Cached(string.Empty, () => CommsPage(viewer));
-            link.TextProvider = _ => counts.Comms < 0 ? T(viewer, "menu.root.comms") : T(viewer, "menu.root.comms_count", counts.Comms);
-            builder.Add(link);
-        }
-
-        if (ToolsAvailable(viewer)) builder.Add(Cached(T(viewer, "menu.root.tools"), () => ToolsPage(viewer)));
-
-        if (ServerAvailable(viewer)) builder.Add(Cached(T(viewer, "menu.root.server"), () => ServerPage(viewer)));
+        // Fixed labels with ids: a menu skin's sidebar keys its entries on them.
+        builder.Add(Cached(T(viewer, "menu.root.players"), () => PlayersPage(viewer), AdminMenuIds.Players));
+        if (_database.Enabled && BanListAvailable(viewer)) builder.Add(Cached(T(viewer, "menu.root.bans"), () => BansPage(viewer), AdminMenuIds.Bans));
+        if (_database.Enabled && CommsListAvailable(viewer)) builder.Add(Cached(T(viewer, "menu.root.comms"), () => CommsPage(viewer), AdminMenuIds.Comms));
+        if (ToolsAvailable(viewer)) builder.Add(Cached(T(viewer, "menu.root.tools"), () => ToolsPage(viewer), AdminMenuIds.Tools));
+        if (ServerAvailable(viewer)) builder.Add(Cached(T(viewer, "menu.root.server"), () => ServerPage(viewer), AdminMenuIds.Server));
 
         List<Registration> registrations;
         lock (_registryLock)
@@ -233,42 +216,28 @@ public sealed partial class AdminMenuService : IAdminMenuAPI, IDisposable
                 continue;
             }
 
-            builder.Add(new Link(title, _ => CreateRegistered(registration, viewer)));
+            builder.Add(new Link(title, _ => CreateRegistered(registration, viewer), registration.Id));
         }
 
-        var menu = Build(builder, page);
-        if (bans || comms) menu.Opened += _ => CountActive(counts, bans, comms);
-        return menu;
+        return Build(builder, page);
     }
 
-    private sealed class ActiveCounts
-    {
-        public int Bans { get; set; } = -1;
+    public IReadOnlyList<IPlayer> GetListedPlayers(IPlayer viewer) => [.. Candidates(viewer, AnyPlayer)];
 
-        public int Comms { get; set; } = -1;
-    }
+    public AdminPlayerState GetPlayerState(IPlayer player) => new(
+        Hidden: _presence.IsHidden(player),
+        Frozen: _control.IsFrozen(player),
+        Noclip: _control.IsNoclip(player),
+        God: _control.IsGod(player),
+        Beacon: _control.HasBeacon(player),
+        Drugged: _control.IsDrugged(player),
+        Esp: _esp.IsEnabled(player),
+        HasDeathPosition: _control.HasDeathPosition(player));
 
-    private void CountActive(ActiveCounts counts, bool bans, bool comms)
-    {
-        _ = Task.Run(async () =>
-        {
-            try
-            {
-                var banCount = bans ? (await _bans.CountAsync().ConfigureAwait(false)).Active : -1;
-                var commsCount = comms ? (await _comms.CountAsync(null).ConfigureAwait(false)).Active : -1;
+    public IReadOnlyList<AdminRecentRow> GetRecentPlayers() =>
+        [.. _recent.List().Select(entry => new AdminRecentRow(entry.SteamId, entry.Name, new DateTimeOffset(entry.LeftAt, TimeSpan.Zero)))];
 
-                _core.Scheduler.NextTick(() =>
-                {
-                    counts.Bans = banCount;
-                    counts.Comms = commsCount;
-                });
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Counting active punishments for the admin menu failed.");
-            }
-        });
-    }
+    public bool IsMapChangePending() => _server.MapChangePending;
 
     private IMenu CreateRegistered(Registration registration, IPlayer viewer)
     {
@@ -280,7 +249,7 @@ public sealed partial class AdminMenuService : IAdminMenuAPI, IDisposable
         {
             _logger.LogError(ex, "Admin menu entry {Id} failed to build its menu.", registration.Id);
 
-            var (builder, page) = NewPage("admins.notice", T(viewer, "menu.title"));
+            var (builder, page) = NewPage(AdminMenuIds.Notice, T(viewer, "menu.title"));
             builder.AddHeader(Line(_ => T(viewer, "menu.entry_failed")));
             return Build(builder, page);
         }

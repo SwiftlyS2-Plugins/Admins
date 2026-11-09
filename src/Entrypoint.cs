@@ -11,6 +11,7 @@ using Admins.Services.PlayerControl;
 using Admins.Services.Presence;
 using Admins.Services.Server;
 using Admins.Services.ServerControl;
+using Admins.Services.Sessions;
 using Admins.Services.Votes;
 using Admins.Shared;
 using Microsoft.Extensions.Configuration;
@@ -47,6 +48,7 @@ public sealed class AdminsPlugin(ISwiftlyCore core) : BasePlugin(core)
             .AddSingleton<StatusService>()
             .AddSingleton<BansService>()
             .AddSingleton<CommsService>()
+            .AddSingleton<SessionsService>()
             .AddSingleton<PlayerControlService>()
             .AddSingleton<EspService>()
             .AddSingleton<ServerControlService>()
@@ -84,6 +86,7 @@ public sealed class AdminsPlugin(ISwiftlyCore core) : BasePlugin(core)
         _services.GetRequiredService<StatusService>();
         _services.GetRequiredService<BansService>();
         _services.GetRequiredService<CommsService>();
+        _services.GetRequiredService<SessionsService>();
         _services.GetRequiredService<PlayerControlService>();
         _services.GetRequiredService<EspService>();
         _services.GetRequiredService<ServerControlService>();

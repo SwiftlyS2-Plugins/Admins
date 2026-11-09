@@ -222,3 +222,54 @@ public class Admins_AddTimeColumnToSanctions : Migration
         }
     }
 }
+
+// Not "sessions": web frameworks that share the database often own a table by that name.
+[Migration(20270215000000)]
+public class Admins_AddPlayerSessionsTable : Migration
+{
+    private const string Table = "player_sessions";
+
+    public override void Up()
+    {
+        if (!Schema.Table(Table).Exists())
+        {
+            Create.Table(Table)
+            .WithColumn("Id").AsInt64().PrimaryKey().Identity()
+            .WithColumn("SteamId64").AsInt64().NotNullable()
+            .WithColumn("PlayerName").AsString(128).NotNullable()
+            .WithColumn("PlayerIp").AsString(64).NotNullable()
+            .WithColumn("Server").AsString(64).NotNullable()
+            .WithColumn("ConnectedAt").AsInt64().NotNullable()
+            .WithColumn("LastSeenAt").AsInt64().NotNullable()
+            .WithColumn("DisconnectedAt").AsInt64().NotNullable().WithDefaultValue(0);
+        }
+
+        if (!Schema.Table(Table).Index("IX_player_sessions_SteamId64").Exists())
+        {
+            Create.Index("IX_player_sessions_SteamId64").OnTable(Table).OnColumn("SteamId64").Ascending();
+        }
+
+        if (!Schema.Table(Table).Index("IX_player_sessions_PlayerIp").Exists())
+        {
+            Create.Index("IX_player_sessions_PlayerIp").OnTable(Table).OnColumn("PlayerIp").Ascending();
+        }
+
+        if (!Schema.Table(Table).Index("IX_player_sessions_Server_ConnectedAt").Exists())
+        {
+            Create.Index("IX_player_sessions_Server_ConnectedAt").OnTable(Table).OnColumn("Server").Ascending().OnColumn("ConnectedAt").Ascending();
+        }
+
+        if (!Schema.Table(Table).Index("IX_player_sessions_Server_DisconnectedAt").Exists())
+        {
+            Create.Index("IX_player_sessions_Server_DisconnectedAt").OnTable(Table).OnColumn("Server").Ascending().OnColumn("DisconnectedAt").Ascending();
+        }
+    }
+
+    public override void Down()
+    {
+        if (Schema.Table(Table).Exists())
+        {
+            Delete.Table(Table);
+        }
+    }
+}

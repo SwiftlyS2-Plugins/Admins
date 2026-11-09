@@ -31,4 +31,24 @@ public interface IAdminMenuAPI
     /// Builds and opens the admin menu for a player.
     /// </summary>
     void OpenAdminMenu(IPlayer player);
+
+    /// <summary>
+    /// The players the viewer's admin menu lists: everyone except the server's TV and hidden admins the viewer may not see.
+    /// </summary>
+    IReadOnlyList<IPlayer> GetListedPlayers(IPlayer viewer);
+
+    /// <summary>
+    /// What the admin tools have set on a player: hidden, frozen, beacon and the like.
+    /// </summary>
+    AdminPlayerState GetPlayerState(IPlayer player);
+
+    /// <summary>
+    /// Players who left in the last few minutes, newest first, without anyone who has come back. Only humans are kept.
+    /// </summary>
+    IReadOnlyList<AdminRecentRow> GetRecentPlayers();
+
+    /// <summary>
+    /// True for a few seconds after a map change is ordered, while it is on its way.
+    /// </summary>
+    bool IsMapChangePending();
 }

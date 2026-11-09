@@ -26,25 +26,6 @@ public sealed partial class CommsService
     [Command("globalsilence", permission: "admins.commands.globalsilence")]
     public void GlobalSilenceCommand(ICommandContext context) => HandleIssue(context, "globalsilence", CommsAction.Silence, SanctionType.SteamID, global: true);
 
-    // The "o" variants used to be the only way to reach an offline SteamID; the plain commands accept one now too.
-    [Command("gago", permission: "admins.commands.gag")]
-    public void GagOfflineCommand(ICommandContext context) => HandleIssue(context, "gago", CommsAction.Gag, SanctionType.SteamID, global: false);
-
-    [Command("globalgago", permission: "admins.commands.globalgag")]
-    public void GlobalGagOfflineCommand(ICommandContext context) => HandleIssue(context, "globalgago", CommsAction.Gag, SanctionType.SteamID, global: true);
-
-    [Command("muteo", permission: "admins.commands.mute")]
-    public void MuteOfflineCommand(ICommandContext context) => HandleIssue(context, "muteo", CommsAction.Mute, SanctionType.SteamID, global: false);
-
-    [Command("globalmuteo", permission: "admins.commands.globalmute")]
-    public void GlobalMuteOfflineCommand(ICommandContext context) => HandleIssue(context, "globalmuteo", CommsAction.Mute, SanctionType.SteamID, global: true);
-
-    [Command("silenceo", permission: "admins.commands.silence")]
-    public void SilenceOfflineCommand(ICommandContext context) => HandleIssue(context, "silenceo", CommsAction.Silence, SanctionType.SteamID, global: false);
-
-    [Command("globalsilenceo", permission: "admins.commands.globalsilence")]
-    public void GlobalSilenceOfflineCommand(ICommandContext context) => HandleIssue(context, "globalsilenceo", CommsAction.Silence, SanctionType.SteamID, global: true);
-
     [Command("gagip", permission: "admins.commands.gag")]
     public void GagIpCommand(ICommandContext context) => HandleIssue(context, "gagip", CommsAction.Gag, SanctionType.IP, global: false);
 
@@ -62,24 +43,6 @@ public sealed partial class CommsService
 
     [Command("globalsilenceip", permission: "admins.commands.globalsilence")]
     public void GlobalSilenceIpCommand(ICommandContext context) => HandleIssue(context, "globalsilenceip", CommsAction.Silence, SanctionType.IP, global: true);
-
-    [Command("gagipo", permission: "admins.commands.gag")]
-    public void GagIpOfflineCommand(ICommandContext context) => HandleIssue(context, "gagipo", CommsAction.Gag, SanctionType.IP, global: false);
-
-    [Command("globalgagipo", permission: "admins.commands.globalgag")]
-    public void GlobalGagIpOfflineCommand(ICommandContext context) => HandleIssue(context, "globalgagipo", CommsAction.Gag, SanctionType.IP, global: true);
-
-    [Command("muteipo", permission: "admins.commands.mute")]
-    public void MuteIpOfflineCommand(ICommandContext context) => HandleIssue(context, "muteipo", CommsAction.Mute, SanctionType.IP, global: false);
-
-    [Command("globalmuteipo", permission: "admins.commands.globalmute")]
-    public void GlobalMuteIpOfflineCommand(ICommandContext context) => HandleIssue(context, "globalmuteipo", CommsAction.Mute, SanctionType.IP, global: true);
-
-    [Command("silenceipo", permission: "admins.commands.silence")]
-    public void SilenceIpOfflineCommand(ICommandContext context) => HandleIssue(context, "silenceipo", CommsAction.Silence, SanctionType.IP, global: false);
-
-    [Command("globalsilenceipo", permission: "admins.commands.globalsilence")]
-    public void GlobalSilenceIpOfflineCommand(ICommandContext context) => HandleIssue(context, "globalsilenceipo", CommsAction.Silence, SanctionType.IP, global: true);
 
     [Command("ungag", permission: "admins.commands.ungag")]
     public void UngagCommand(ICommandContext context) => HandleLift(context, "ungag", CommsAction.Gag);
@@ -103,7 +66,7 @@ public sealed partial class CommsService
 
         if (args.Length < 3)
         {
-            _messenger.Syntax(issuer, command, type == SanctionType.IP ? "<player|ip> <time> <reason>" : "<player|steamid64> <time> <reason>");
+            _messenger.Syntax(issuer, command, type == SanctionType.IP ? "<ip> <time> <reason>" : "<player|steamid64> <time> <reason>");
             return;
         }
 
@@ -114,6 +77,13 @@ public sealed partial class CommsService
         }
 
         var reason = string.Join(' ', args.Skip(2)).Trim();
+
+        if (type == SanctionType.IP)
+        {
+            SanctionIp(issuer, args[0], action, duration, reason, global);
+            return;
+        }
+
         var players = _targets.Find(issuer.Player, args[0], out var error, excludeCaller: true);
 
         if (players.Count > 0)
@@ -140,18 +110,6 @@ public sealed partial class CommsService
             return;
         }
 
-        if (type == SanctionType.IP)
-        {
-            if (!Net.IsIp(args[0]))
-            {
-                _messenger.Reply(issuer, "command.player_not_found", args[0]);
-                return;
-            }
-
-            SanctionOffline(issuer, 0, args[0], action, SanctionType.IP, duration, reason, global);
-            return;
-        }
-
         if (!SteamIds.TryParse(args[0], out var steamId))
         {
             _messenger.Reply(issuer, "command.player_not_found", args[0]);
@@ -165,6 +123,28 @@ public sealed partial class CommsService
         }
 
         SanctionOffline(issuer, steamId, null, action, SanctionType.SteamID, duration, reason, global);
+    }
+
+    // Reaches everyone connected from the address, so each of them has to be targetable.
+    private void SanctionIp(Issuer issuer, string address, CommsAction action, TimeSpan duration, string reason, bool global)
+    {
+        if (!Net.IsIp(address))
+        {
+            _messenger.Reply(issuer, "command.invalid_ip", address);
+            return;
+        }
+
+        var ip = Net.NormalizeIp(address);
+        var players = _targets.OnIp(ip);
+
+        if (players.FirstOrDefault(p => !_access.CanTarget(issuer.Player, p.SteamID)) is { } immune)
+        {
+            _messenger.Reply(issuer, "command.target_has_immunity", Names.Of(immune), _access.GetImmunity(immune.SteamID));
+            return;
+        }
+
+        var known = players.Count == 1 ? players[0] : null;
+        SanctionOffline(issuer, known?.SteamID ?? 0, ip, action, SanctionType.IP, duration, reason, global, known is null ? null : Names.Of(known));
     }
 
     // Lifts SteamID rows and, for an online target, IP rows on their current address. Rows from another

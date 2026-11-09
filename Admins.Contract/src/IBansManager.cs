@@ -31,6 +31,11 @@ public interface IBansManager
     /// </summary>
     Task RemoveBanAsync(IBan ban);
 
+    /// <summary>
+    /// Counts the bans that apply to this server, as the Bans page shows them. Zero without a database.
+    /// </summary>
+    Task<AdminRecordCounts> CountBansAsync();
+
     event Action<IBan>? OnAdminBanAdded;
     event Action<IBan>? OnAdminBanUpdated;
     event Action<IBan>? OnAdminBanRemoved;

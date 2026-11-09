@@ -6,6 +6,7 @@ using Microsoft.Extensions.Logging;
 using SwiftlyS2.Shared.Menu;
 using SwiftlyS2.Shared.Menu.Components;
 using SwiftlyS2.Shared.Players;
+using Punishment = Admins.Contract.AdminPunishment;
 
 namespace Admins.Services.Menus;
 
@@ -14,9 +15,9 @@ public sealed partial class AdminMenuService
     /// <summary>
     /// One punishment being put together, a page per step: the player unless it started from one, the kind when it started
     /// from the Comms page, the reason, the length, where it applies when the admin may choose, and a last look. A kick is
-    /// issued as soon as the reason is picked.
+    /// issued as soon as the reason is picked. A part no listed choice fits is typed in chat: the last look prints the command.
     /// </summary>
-    private sealed class Draft
+    private sealed class Draft : IAdminDraft
     {
         public required Punishment Kind { get; set; }
 
@@ -56,6 +57,46 @@ public sealed partial class AdminMenuService
         public bool ByIp { get; set; }
 
         public bool IpOnly => Target.SteamId == 0;
+
+        /// <summary>Steps left for the admin to type into the printed command; their values read as not picked.</summary>
+        public HashSet<AdminFlowStep> InChat { get; } = [];
+
+        /// <summary>Asks the viewer's permissions, which the kind picked can change. Null when changing a length.</summary>
+        public Func<bool>? ScopeAsked { get; set; }
+
+        public Func<TimeSpan?, string>? PreviewOf { get; set; }
+
+        AdminPlayerRow? IAdminDraft.Target => HasTarget ? RowOf(Target) : null;
+
+        IReadOnlySet<AdminFlowStep> IAdminDraft.TypedInChat => InChat;
+
+        TimeSpan? IAdminDraft.Length => HasLength ? Length : null;
+
+        AdminRecordRow? IAdminDraft.Record => Record is null ? null : RecordRowOf(Record);
+
+        // The order the pages come in; a kick ends on its reason, and a length change is its only page.
+        IReadOnlyList<AdminFlowStep> IAdminDraft.Steps
+        {
+            get
+            {
+                if (Record is not null) return [AdminFlowStep.Length];
+
+                var steps = new List<AdminFlowStep>(6);
+                if (PicksTarget) steps.Add(AdminFlowStep.Target);
+                if (PicksKind) steps.Add(AdminFlowStep.Kind);
+                steps.Add(AdminFlowStep.Reason);
+                if (Kind == Punishment.Kick) return steps;
+
+                steps.Add(AdminFlowStep.Length);
+                if (ScopeAsked?.Invoke() == true) steps.Add(AdminFlowStep.Scope);
+                steps.Add(AdminFlowStep.Confirm);
+                return steps;
+            }
+        }
+
+        string IAdminDraft.Preview(TimeSpan? length) =>
+            Kind == Punishment.Kick || Record is not null || PreviewOf is null ? string.Empty
+            : PreviewOf(length ?? (InChat.Contains(AdminFlowStep.Length) ? null : Length));
     }
 
     /// <summary>The flow behind a punishment command typed without arguments.</summary>
@@ -78,6 +119,8 @@ public sealed partial class AdminMenuService
 
         if (target is { } picked) SetTarget(draft, picked);
         DefaultScope(viewer, draft);
+        draft.ScopeAsked = () => AsksScope(viewer, draft);
+        draft.PreviewOf = length => Preview(viewer, draft, length);
         return draft;
     }
 
@@ -101,21 +144,39 @@ public sealed partial class AdminMenuService
     // Going back to a step reopens it, so the picks after it no longer stand.
     private static void Rewind(Draft draft, string step)
     {
-        if (step == "target") draft.HasTarget = false;
+        if (step == "target")
+        {
+            draft.HasTarget = false;
+            draft.InChat.Remove(AdminFlowStep.Target);
+        }
+
         if (step is "target" or "kind") draft.HasKind = false;
-        if (step is "target" or "kind" or "reason") draft.HasReason = false;
-        if (step is "target" or "kind" or "reason" or "length") draft.HasLength = false;
+
+        if (step is "target" or "kind" or "reason")
+        {
+            draft.HasReason = false;
+            draft.InChat.Remove(AdminFlowStep.Reason);
+        }
+
+        if (step is "target" or "kind" or "reason" or "length")
+        {
+            draft.HasLength = false;
+            draft.InChat.Remove(AdminFlowStep.Length);
+        }
     }
 
     private string FlowTitle(IPlayer viewer, Draft draft) =>
-        T(viewer, draft.Record is null ? $"menu.flow.title_{Key(draft.Kind)}" : "menu.flow.title_length", Name(draft));
+        T(viewer, draft.Record is null ? $"menu.flow.title_{Key(draft.Kind)}" : "menu.flow.title_length", Subject(viewer, draft));
+
+    private string Subject(IPlayer viewer, Draft draft) =>
+        draft.InChat.Contains(AdminFlowStep.Target) ? T(viewer, "menu.flow.someone") : Name(draft);
 
     // The ids a menu skin keys its layouts on, one per kind of flow.
     private static string FlowId(Draft draft, string step) => draft.Kind switch
     {
-        Punishment.Ban => $"admins.bans.give.{step}",
-        Punishment.Kick => $"admins.kick.{step}",
-        _ => $"admins.comms.give.{step}",
+        Punishment.Ban => AdminMenuIds.GiveBan + step,
+        Punishment.Kick => AdminMenuIds.Kick + step,
+        _ => AdminMenuIds.GiveComms + step,
     };
 
     private static string Name(Draft draft)
@@ -130,13 +191,13 @@ public sealed partial class AdminMenuService
     private IMenu TargetPage(IPlayer viewer, Draft draft)
     {
         var kick = draft.Kind == Punishment.Kick;
-        var (builder, page) = NewPage(FlowId(draft, "target"), T(viewer, draft.PicksKind ? "menu.pick.title_comms" : $"menu.pick.title_{Key(draft.Kind)}"));
+        var (builder, page) = NewPage(FlowId(draft, AdminFlowSteps.Target), T(viewer, draft.PicksKind ? "menu.pick.title_comms" : $"menu.pick.title_{Key(draft.Kind)}"));
         AddWarnings(builder, viewer, draft);
         builder.AddHeader(Line(_ => T(viewer, "menu.players.empty"), _ => page.Rows.Count == 0));
 
         var rules = kick
-            ? new PickRules(ExcludeSelf: true, HumansOnly: false, NeedSteamId: false, BlockImmune: true)
-            : new PickRules(ExcludeSelf: true, HumansOnly: true, NeedSteamId: true, BlockImmune: true);
+            ? new PickRules(HumansOnly: false, NeedSteamId: false, BlockImmune: true)
+            : new PickRules(HumansOnly: true, NeedSteamId: true, BlockImmune: true);
         var offline = !kick && _database.Enabled;
 
         IMenu? Pick(PlayerRef target)
@@ -151,30 +212,43 @@ public sealed partial class AdminMenuService
             {
                 TextProvider = _ => T(viewer, "menu.recent.link", _recent.List().Count),
                 VisibleWhen = _ => _recent.List().Count > 0,
+                Tag = new AdminActionRow(AdminAction.Recent),
             });
 
-            builder.Add(new Row(T(viewer, "menu.target.by_id"), session => PrintUsage(session, ByIdUsage(viewer, draft), "menu.usage_time")));
+            builder.Add(new Link(T(viewer, "menu.target.by_id"), _ =>
+            {
+                draft.Target = default;
+                draft.ByIp = draft.WantsIp;
+                draft.InChat.Add(AdminFlowStep.Target);
+                return draft.PicksKind ? KindPage(viewer, draft) : ReasonPage(viewer, draft);
+            })
+            {
+                Validating = page.Guard,
+                Tag = new AdminActionRow(AdminAction.ById),
+            });
         }
 
         var menu = Build(builder, page, () => PlayerRows(viewer, rules, Pick));
+        menu.Tag = new AdminFlowPage(AdminFlowStep.Target, draft);
         menu.Opened += _ => Rewind(draft, "target");
         return menu;
     }
 
     private IMenu RecentPage(IPlayer viewer, Draft draft, Func<PlayerRef, IMenu?> pick)
     {
-        var (builder, page) = NewPage(FlowId(draft, "target.recent"), T(viewer, "menu.recent.title"));
+        var (builder, page) = NewPage(FlowId(draft, AdminFlowSteps.Recent), T(viewer, "menu.recent.title"));
         AddWarnings(builder, viewer, draft);
         builder.AddHeader(Line(_ => T(viewer, "menu.recent.none"), _ => page.Rows.Count == 0));
 
         var menu = Build(builder, page, () => RecentRows(viewer, pick));
+        menu.Tag = new AdminFlowPage(AdminFlowStep.Target, draft);
         menu.Opened += _ => Rewind(draft, "target");
         return menu;
     }
 
     private IMenu KindPage(IPlayer viewer, Draft draft)
     {
-        var (builder, page) = NewPage(FlowId(draft, "kind"), T(viewer, "menu.flow.title_comms", Name(draft)));
+        var (builder, page) = NewPage(FlowId(draft, AdminFlowSteps.Kind), T(viewer, "menu.flow.title_comms", Subject(viewer, draft)));
         AddWarnings(builder, viewer, draft);
 
         foreach (var kind in CommsKinds)
@@ -190,10 +264,12 @@ public sealed partial class AdminMenuService
             })
             {
                 Validating = page.Guard,
+                Tag = new AdminKindRow(kind),
             });
         }
 
         var menu = Build(builder, page);
+        menu.Tag = new AdminFlowPage(AdminFlowStep.Kind, draft);
         menu.Opened += _ => Rewind(draft, "kind");
         return menu;
     }
@@ -201,7 +277,7 @@ public sealed partial class AdminMenuService
     private IMenu ReasonPage(IPlayer viewer, Draft draft)
     {
         var kick = draft.Kind == Punishment.Kick;
-        var (builder, page) = NewPage(FlowId(draft, "reason"), FlowTitle(viewer, draft));
+        var (builder, page) = NewPage(FlowId(draft, AdminFlowSteps.Reason), FlowTitle(viewer, draft));
         AddWarnings(builder, viewer, draft);
 
         var remembered = StateOf(viewer).LastReason.GetValueOrDefault(draft.Kind);
@@ -218,6 +294,7 @@ public sealed partial class AdminMenuService
                 })
                 {
                     Validating = page.Guard,
+                    Tag = new AdminReasonRow(reason),
                 };
             }
 
@@ -229,6 +306,7 @@ public sealed partial class AdminMenuService
             })
             {
                 Validating = page.Guard,
+                Tag = new AdminReasonRow(reason),
             };
         }
 
@@ -241,10 +319,40 @@ public sealed partial class AdminMenuService
             if (page.Start is null && string.Equals(reason, remembered, StringComparison.Ordinal)) page.Start = row;
         }
 
-        builder.Add(new Row(T(viewer, "menu.flow.custom_reason"), session =>
-            PrintUsage(session, [Usage(draft, "<time>", "<reason>")], kick ? null : "menu.usage_time")));
+        // A kick prints its command now; anything else carries on, so the command printed at the end has the rest filled in.
+        if (kick)
+        {
+            builder.Add(new Row(T(viewer, "menu.flow.custom_reason"), session =>
+            {
+                if (Live(draft.Target) is null)
+                {
+                    _messenger.Chat(viewer, "menu.player_left");
+                    return;
+                }
+
+                draft.InChat.Add(AdminFlowStep.Reason);
+                PrintUsage(session, FilledCommands(draft));
+            })
+            {
+                Validating = page.Guard,
+                Tag = new AdminActionRow(AdminAction.CustomReason),
+            });
+        }
+        else
+        {
+            builder.Add(new Link(T(viewer, "menu.flow.custom_reason"), _ =>
+            {
+                draft.InChat.Add(AdminFlowStep.Reason);
+                return LengthPage(viewer, draft);
+            })
+            {
+                Validating = page.Guard,
+                Tag = new AdminActionRow(AdminAction.CustomReason),
+            });
+        }
 
         var menu = Build(builder, page);
+        menu.Tag = new AdminFlowPage(AdminFlowStep.Reason, draft);
         menu.Opened += _ => Rewind(draft, "reason");
         return menu;
     }
@@ -252,7 +360,7 @@ public sealed partial class AdminMenuService
     private IMenu LengthPage(IPlayer viewer, Draft draft)
     {
         var changing = draft.Record is not null;
-        var (builder, page) = NewPage(FlowId(draft, "length"), FlowTitle(viewer, draft));
+        var (builder, page) = NewPage(FlowId(draft, AdminFlowSteps.Length), FlowTitle(viewer, draft));
 
         if (changing) builder.AddHeader(Line(_ => T(viewer, "menu.flow.from_now")));
         else AddWarnings(builder, viewer, draft);
@@ -277,6 +385,7 @@ public sealed partial class AdminMenuService
                 })
                 {
                     Validating = page.Guard,
+                    Tag = new AdminLengthRow(length),
                 };
             }
 
@@ -288,6 +397,7 @@ public sealed partial class AdminMenuService
             })
             {
                 Validating = page.Guard,
+                Tag = new AdminLengthRow(length),
             };
         }
 
@@ -311,18 +421,26 @@ public sealed partial class AdminMenuService
 
         if (!changing)
         {
-            builder.Add(new Row(T(viewer, "menu.flow.custom_length"), session =>
-                PrintUsage(session, [Usage(draft, "<time>", draft.HasReason && draft.Reason is { } reason ? reason : "<reason>")], "menu.usage_time")));
+            builder.Add(new Link(T(viewer, "menu.flow.custom_length"), _ =>
+            {
+                draft.InChat.Add(AdminFlowStep.Length);
+                return AsksScope(viewer, draft) ? ScopePage(viewer, draft) : ConfirmPage(viewer, draft);
+            })
+            {
+                Validating = page.Guard,
+                Tag = new AdminActionRow(AdminAction.CustomLength),
+            });
         }
 
         var menu = Build(builder, page);
+        menu.Tag = new AdminFlowPage(AdminFlowStep.Length, draft);
         if (!changing) menu.Opened += _ => Rewind(draft, "length");
         return menu;
     }
 
     private IMenu ScopePage(IPlayer viewer, Draft draft)
     {
-        var (builder, page) = NewPage(FlowId(draft, "scope"), FlowTitle(viewer, draft));
+        var (builder, page) = NewPage(FlowId(draft, AdminFlowSteps.Scope), FlowTitle(viewer, draft));
         AddWarnings(builder, viewer, draft);
 
         foreach (var global in new[] { false, true })
@@ -334,32 +452,44 @@ public sealed partial class AdminMenuService
             })
             {
                 Validating = page.Guard,
+                Tag = new AdminScopeRow(global),
             };
 
             builder.Add(choice);
             if (draft.Global == global) page.Start = choice;
         }
 
-        return Build(builder, page);
+        var menu = Build(builder, page);
+        menu.Tag = new AdminFlowPage(AdminFlowStep.Scope, draft);
+        return menu;
     }
 
     private IMenu ConfirmPage(IPlayer viewer, Draft draft)
     {
-        var (builder, page) = NewPage(FlowId(draft, "confirm"), FlowTitle(viewer, draft));
+        var (builder, page) = NewPage(FlowId(draft, AdminFlowSteps.Confirm), FlowTitle(viewer, draft));
         AddWarnings(builder, viewer, draft);
 
-        var confirm = new Row(T(viewer, $"menu.flow.confirm_{Key(draft.Kind)}"), session => Apply(viewer, draft, session))
-        {
-            Style = DangerStyle,
-            Validating = page.Guard,
-        };
+        var typed = draft.InChat.Count > 0;
+
+        var confirm = typed
+            ? new Row(T(viewer, "menu.flow.print"), session => PrintUsage(session, FilledCommands(draft)))
+            {
+                Validating = page.Guard,
+                Tag = new AdminActionRow(AdminAction.PrintCommand),
+            }
+            : new Row(T(viewer, $"menu.flow.confirm_{Key(draft.Kind)}"), session => Apply(viewer, draft, session))
+            {
+                Style = DangerStyle,
+                Validating = page.Guard,
+                Tag = new AdminActionRow(AdminAction.Confirm),
+            };
 
         builder.Add(confirm);
         page.Start = confirm;
 
-        builder.Add(new Row(T(viewer, "menu.flow.summary"), _ => SummarizeDraft(viewer, draft)));
+        if (!typed) builder.Add(new Row(T(viewer, "menu.flow.summary"), _ => SummarizeDraft(viewer, draft)) { Tag = new AdminActionRow(AdminAction.Summary) });
 
-        if (draft.Target.SteamId != 0 && draft.Target.Ip.Length > 0)
+        if (draft.HasTarget && draft.Target.SteamId != 0 && draft.Target.Ip.Length > 0)
         {
             builder.Add(new Row(string.Empty, session =>
             {
@@ -368,10 +498,13 @@ public sealed partial class AdminMenuService
             })
             {
                 TextProvider = _ => T(viewer, "menu.flow.match", T(viewer, draft.ByIp ? "menu.flow.match_ip" : "menu.flow.match_steamid")),
+                Tag = new AdminActionRow(AdminAction.Match),
             });
         }
 
-        return Build(builder, page);
+        var menu = Build(builder, page);
+        menu.Tag = new AdminFlowPage(AdminFlowStep.Confirm, draft);
+        return menu;
     }
 
     private void AddWarnings(IMenuBuilder builder, IPlayer viewer, Draft draft)
@@ -387,33 +520,39 @@ public sealed partial class AdminMenuService
             WarnStyle));
     }
 
-    /// <summary>The chat command that issues this punishment, for a reason or length the menu does not list.</summary>
-    private string Usage(Draft draft, string time, string reason)
+    /// <summary>The chat commands that issue the draft, with a placeholder for each part typed in chat.</summary>
+    private IEnumerable<string> FilledCommands(Draft draft)
     {
-        var command = Key(draft.Kind);
-        if (draft.Global) command = "global" + command;
-        if (draft.ByIp) command += "ip";
+        var command = (draft.Global ? "global" : string.Empty) + Key(draft.Kind);
+        var reason = draft.InChat.Contains(AdminFlowStep.Reason) ? "<reason>" : draft.Reason;
+        var time = draft.InChat.Contains(AdminFlowStep.Length) ? "<time>" : CommandLength(draft.Length);
 
-        var target = Live(draft.Target) is { } player ? $"#{player.UserID}"
-            : draft.ByIp ? draft.Target.Ip
-            : draft.Target.SteamId.ToString();
+        string Of(string name, string target) =>
+            draft.Kind == Punishment.Kick ? $"!{name} {target} {reason}" : $"!{name} {target} {time} {reason}";
 
-        return draft.Kind == Punishment.Kick ? $"!{command} {target} {reason}" : $"!{command} {target} {time} {reason}";
+        if (draft.InChat.Contains(AdminFlowStep.Target))
+        {
+            if (!draft.ByIp) yield return Of(command, "<steamid64>");
+            yield return Of(command + "ip", "<ip>");
+            yield break;
+        }
+
+        // Not #userid: once the player leaves, that can match whoever takes their slot. A SteamID64 or IP also works offline.
+        var target = draft.ByIp ? draft.Target.Ip
+            : draft.Target.SteamId != 0 ? draft.Target.SteamId.ToString()
+            : $"#{Live(draft.Target)?.UserID}";
+
+        yield return Of(draft.ByIp ? command + "ip" : command, target);
     }
 
-    // For someone who left before the last few minutes, or never joined: the menu only knows recent players.
-    private IEnumerable<string> ByIdUsage(IPlayer viewer, Draft draft)
+    // One token the commands parse back, so 30h where Durations.Format would give "1d 6h".
+    private static string CommandLength(TimeSpan length)
     {
-        IEnumerable<Punishment> kinds = draft.PicksKind ? [Punishment.Gag, Punishment.Mute] : [draft.Kind];
-
-        foreach (var kind in kinds)
-        {
-            if (!CanPunishAny(viewer, kind)) continue;
-
-            var command = (CanPunish(viewer, kind, false) ? string.Empty : "global") + Key(kind);
-            yield return $"!{command} <steamid64> <time> <reason>";
-            if (kind == Punishment.Ban) yield return $"!{command}ip <ip> <time> <reason>";
-        }
+        var seconds = (long)length.TotalSeconds;
+        if (seconds <= 0) return "0";
+        if (seconds % 86400 == 0) return $"{seconds / 86400}d";
+        if (seconds % 3600 == 0) return $"{seconds / 3600}h";
+        return seconds % 60 == 0 ? $"{seconds / 60}m" : $"{seconds}s";
     }
 
     private void SummarizeDraft(IPlayer viewer, Draft draft)
@@ -423,14 +562,14 @@ public sealed partial class AdminMenuService
         var subject = name == id ? id : $"{name} ({id})";
 
         _messenger.Chat(viewer, "menu.summary.pending", KindName(viewer, draft.Kind), subject, ReasonText(viewer, draft.Reason), Readable(viewer, draft.Length), Scope(viewer, draft.Global));
-        _messenger.Chat(viewer, "menu.summary.sees", Preview(viewer, draft));
+        _messenger.Chat(viewer, "menu.summary.sees", Preview(viewer, draft, draft.Length));
     }
 
-    // What the player is shown, in the admin's language since the admin is the one reading it.
-    private string Preview(IPlayer viewer, Draft draft)
+    // What the player is shown, in the admin's language since the admin is the one reading it. A null length is typed in chat.
+    private string Preview(IPlayer viewer, Draft draft, TimeSpan? length)
     {
-        var reason = draft.Reason ?? string.Empty;
-        var until = _messenger.Timestamp(viewer, Durations.ExpiresAt(draft.Length, AdminsDatabase.NowMs));
+        var reason = draft.InChat.Contains(AdminFlowStep.Reason) ? "<reason>" : draft.Reason ?? string.Empty;
+        var until = length is { } span ? _messenger.Timestamp(viewer, Durations.ExpiresAt(span, AdminsDatabase.NowMs)) : "<time>";
 
         var text = draft.Kind switch
         {
@@ -472,6 +611,13 @@ public sealed partial class AdminMenuService
         if (target.SteamId != 0 && !_access.CanTarget(viewer, target.SteamId))
         {
             _messenger.Chat(viewer, "command.target_has_immunity", Name(draft), _access.GetImmunity(target.SteamId));
+            return;
+        }
+
+        // By IP it reaches everyone connected from the address, as the ip commands do, so each of them has to be targetable.
+        if (draft.ByIp && target.Ip.Length > 0 && _targets.OnIp(target.Ip).FirstOrDefault(p => !_access.CanTarget(viewer, p.SteamID)) is { } shielded)
+        {
+            _messenger.Chat(viewer, "command.target_has_immunity", Names.Of(shielded), _access.GetImmunity(shielded.SteamID));
             return;
         }
 

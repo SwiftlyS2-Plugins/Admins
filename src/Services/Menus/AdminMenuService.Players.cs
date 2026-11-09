@@ -4,17 +4,23 @@ using Admins.Shared;
 using Microsoft.Extensions.Logging;
 using SwiftlyS2.Shared.Menu;
 using SwiftlyS2.Shared.Players;
+using Punishment = Admins.Contract.AdminPunishment;
 
 namespace Admins.Services.Menus;
 
 public sealed partial class AdminMenuService
 {
-    private sealed record PickRules(bool ExcludeSelf, bool HumansOnly, bool NeedSteamId, bool BlockImmune);
+    private sealed record PickRules(bool HumansOnly, bool NeedSteamId, bool BlockImmune);
 
     /// <param name="Run">
     /// Gets the player, or null when only their SteamID is left to act on, and returns the page to open, or null to stay.
     /// </param>
-    private sealed record Act(Func<IPlayer?, string> Label, Func<IPlayer?, bool> Visible, Func<IPlayer?, IMenuSession, IMenu?> Run, bool Risky = false);
+    private sealed record Act(
+        AdminPlayerAction Action,
+        Func<IPlayer?, string> Label,
+        Func<IPlayer?, bool> Visible,
+        Func<IPlayer?, IMenuSession, IMenu?> Run,
+        bool Risky = false);
 
     private sealed class HistoryLoad
     {
@@ -26,24 +32,33 @@ public sealed partial class AdminMenuService
         public IReadOnlyList<object>? Records { get; set; }
     }
 
-    private static readonly PickRules AnyPlayer = new(ExcludeSelf: false, HumansOnly: false, NeedSteamId: false, BlockImmune: false);
+    private static readonly PickRules AnyPlayer = new(HumansOnly: false, NeedSteamId: false, BlockImmune: false);
 
     // Null is everyone; spectators include players still picking a team.
     private static readonly Team?[] TeamFilters = [null, Team.CT, Team.T, Team.Spectator];
+
+    private sealed class PlayerListView : IAdminPlayerList
+    {
+        public int Filter { get; set; }
+
+        public Team? Team => TeamFilters[Filter];
+    }
+
+    private static AdminPlayerRow RowOf(PlayerRef target) => new(target.Slot, target.SessionId, target.SteamId, target.Name);
 
     #region Player lists
 
     /// <summary>Everyone on the server. Players above the viewer's immunity are listed, but locked.</summary>
     private IMenu PlayersPage(IPlayer viewer)
     {
-        var (builder, page) = NewPage("admins.players", T(viewer, "menu.players.title"));
+        var (builder, page) = NewPage(AdminMenuIds.Players, T(viewer, "menu.players.title"));
         var rules = AnyPlayer with { BlockImmune = true };
-        var filter = 0;
+        var view = new PlayerListView();
         IMenu? self = null;
 
         builder.AddHeader(Line(_ => T(viewer, "menu.players.empty"), _ => page.Rows.Count == 0));
 
-        bool Shown(IPlayer player) => TeamFilters[filter] switch
+        bool Shown(IPlayer player) => view.Team switch
         {
             null => true,
             Team.Spectator => TeamOf(player) is Team.Spectator or Team.None,
@@ -54,16 +69,18 @@ public sealed partial class AdminMenuService
 
         builder.Add(new Row(string.Empty, session =>
         {
-            filter = (filter + 1) % TeamFilters.Length;
+            view.Filter = (view.Filter + 1) % TeamFilters.Length;
             ReplaceRows(self!, page, Rows());
             session.Invalidate();
         })
         {
-            TextProvider = _ => T(viewer, $"menu.players.show_{FilterKey(TeamFilters[filter])}", Candidates(viewer, AnyPlayer).Count(Shown)),
+            TextProvider = _ => T(viewer, $"menu.players.show_{FilterKey(view.Team)}", Candidates(viewer, AnyPlayer).Count(Shown)),
+            Tag = new AdminActionRow(AdminAction.TeamFilter),
         });
         page.RowsAt = 1;
 
         self = Build(builder, page, Rows);
+        self.Tag = view;
         return self;
     }
 
@@ -98,7 +115,7 @@ public sealed partial class AdminMenuService
             {
                 TextProvider = _ => Live(target) is null ? T(viewer, "menu.players.tag_left", label) : label,
                 Enabled = !(rules.BlockImmune && Immune(viewer, player)),
-                Tag = new RowKey("player", (long)target.SessionId),
+                Tag = RowOf(target),
             });
         }
 
@@ -118,7 +135,7 @@ public sealed partial class AdminMenuService
             {
                 TextProvider = _ => T(viewer, "menu.recent.row", entry.Name, Ago(entry.LeftAt)),
                 Enabled = _access.CanTarget(viewer, entry.SteamId),
-                Tag = new RowKey("recent", (long)entry.SteamId),
+                Tag = new AdminRecentRow(entry.SteamId, entry.Name, new DateTimeOffset(entry.LeftAt, TimeSpan.Zero)),
             });
         }
 
@@ -132,7 +149,6 @@ public sealed partial class AdminMenuService
             if (player.Controller is { IsValid: true, IsHLTV: true }) continue;
 
             var self = IsSelf(viewer, player);
-            if (rules.ExcludeSelf && self) continue;
             if (rules.HumansOnly && player.IsFakeClient) continue;
             if (rules.NeedSteamId && !player.IsFakeClient && player.SteamID == 0) continue;
             if (!self && _presence.IsHidden(player) && !_presence.CanSeeHidden(viewer, player)) continue;
@@ -194,14 +210,14 @@ public sealed partial class AdminMenuService
     /// <param name="afterRemoval">Where a kick or ban lands, since this page has nobody left to show.</param>
     private IMenu PlayerPage(IPlayer viewer, PlayerRef target, IMenu? afterRemoval)
     {
-        var (builder, page) = NewPage("admins.players.player", target.Name);
+        var (builder, page) = NewPage(AdminMenuIds.Player, target.Name);
         AddPlayerNotices(builder, viewer, target);
 
-        var groups = new (string Id, string Label, string Title, Act[] Acts)[]
+        var groups = new (AdminPlayerGroup Group, string Id, string Label, string Title, Act[] Acts)[]
         {
-            ("punish", "menu.player.punish", "menu.player.punish_title", PunishActs(viewer, target, afterRemoval)),
-            ("control", "menu.player.control", "menu.player.control_title", ControlActs(viewer, target)),
-            ("move", "menu.player.move", "menu.player.move_title", MoveActs(viewer, target)),
+            (AdminPlayerGroup.Punish, AdminMenuIds.PlayerPunish, "menu.player.punish", "menu.player.punish_title", PunishActs(viewer, target, afterRemoval)),
+            (AdminPlayerGroup.Control, AdminMenuIds.PlayerControl, "menu.player.control", "menu.player.control_title", ControlActs(viewer, target)),
+            (AdminPlayerGroup.Move, AdminMenuIds.PlayerMove, "menu.player.move", "menu.player.move_title", MoveActs(viewer, target)),
         };
 
         var withHistory = target.SteamId != 0 && _database.Enabled && (BanListAvailable(viewer) || CommsListAvailable(viewer));
@@ -210,12 +226,13 @@ public sealed partial class AdminMenuService
 
         builder.AddHeader(Line(_ => T(viewer, "menu.hub.nothing"), _ => !withHistory && !groups.Any(g => AnyShown(g.Acts))));
 
-        foreach (var (id, label, title, acts) in groups)
+        foreach (var (group, id, label, title, acts) in groups)
         {
             if (acts.Length == 0) continue;
 
             var link = Cached(T(viewer, label), () => GroupPage(viewer, target, id, T(viewer, title, target.Name), acts));
             link.VisibleWhen = _ => AnyShown(acts);
+            link.Tag = new AdminPlayerGroupRow(group);
             builder.Add(link);
         }
 
@@ -225,22 +242,27 @@ public sealed partial class AdminMenuService
         {
             var link = Cached(string.Empty, () => HistoryPage(viewer, target, history));
             link.TextProvider = _ => history.Records is { } records ? T(viewer, "menu.player.history", records.Count) : T(viewer, "menu.player.history_plain");
+            link.Tag = new AdminPlayerGroupRow(AdminPlayerGroup.History);
             builder.Add(link);
         }
 
         var self = Build(builder, page);
+        self.Tag = RowOf(target);
         if (withHistory) self.Opened += _ => LoadHistory(viewer, target, history, done: null);
         return self;
     }
 
     private IMenu GroupPage(IPlayer viewer, PlayerRef target, string id, string title, Act[] acts)
     {
-        var (builder, page) = NewPage($"admins.players.player.{id}", title);
+        var (builder, page) = NewPage(id, title);
         AddPlayerNotices(builder, viewer, target);
         builder.AddHeader(Line(_ => T(viewer, "menu.hub.nothing"), _ => !acts.Any(a => a.Visible(Live(target)))));
 
         foreach (var act in acts) builder.Add(ActRow(viewer, target, act, page));
-        return Build(builder, page);
+
+        var menu = Build(builder, page);
+        menu.Tag = RowOf(target);
+        return menu;
     }
 
     private Link ActRow(IPlayer viewer, PlayerRef target, Act act, PageState page)
@@ -262,14 +284,16 @@ public sealed partial class AdminMenuService
             TextProvider = _ => act.Label(Live(target)),
             VisibleWhen = _ => act.Visible(Live(target)),
             Validating = page.Guard,
+            Tag = new AdminPlayerActionRow(act.Action),
         };
 
         if (act.Risky) row.Style = DangerStyle;
         return row;
     }
 
-    private static Act OnServer(Func<IPlayer, string> label, Func<IPlayer, bool> visible, Func<IPlayer, IMenuSession, IMenu?> run, bool risky = false) =>
-        new(p => p is null ? string.Empty : label(p), p => p is not null && visible(p), (p, session) => run(p!, session), risky);
+    private static Act OnServer(
+        AdminPlayerAction action, Func<IPlayer, string> label, Func<IPlayer, bool> visible, Func<IPlayer, IMenuSession, IMenu?> run, bool risky = false) =>
+        new(action, p => p is null ? string.Empty : label(p), p => p is not null && visible(p), (p, session) => run(p!, session), risky);
 
     // Kick and ban first, slay last. The by-SteamID punishments still work once the player has left.
     private Act[] PunishActs(IPlayer viewer, PlayerRef target, IMenu? afterRemoval)
@@ -285,6 +309,7 @@ public sealed partial class AdminMenuService
         if (CanPunishAny(viewer, Punishment.Kick))
         {
             acts.Add(OnServer(
+                AdminPlayerAction.Kick,
                 _ => T(viewer, "menu.punish.kick"),
                 Punishable,
                 (p, _) => ReasonPage(viewer, NewDraft(viewer, Punishment.Kick, PlayerRef.Of(p), afterRemoval, global: false)),
@@ -293,7 +318,7 @@ public sealed partial class AdminMenuService
 
         if (CanPunishAny(viewer, Punishment.Ban))
         {
-            acts.Add(new Act(_ => T(viewer, "menu.punish.ban"), Issuable, (p, _) => ReasonPage(viewer, NewDraft(viewer, Punishment.Ban, Ref(p), afterRemoval)), Risky: true));
+            acts.Add(new Act(AdminPlayerAction.Ban, _ => T(viewer, "menu.punish.ban"), Issuable, (p, _) => ReasonPage(viewer, NewDraft(viewer, Punishment.Ban, Ref(p), afterRemoval)), Risky: true));
         }
 
         foreach (var kind in new[] { Punishment.Mute, Punishment.Gag })
@@ -306,6 +331,7 @@ public sealed partial class AdminMenuService
             Sanction? Active(IPlayer? p) => p is null ? null : _comms.GetActive(p, sanctionKind);
 
             acts.Add(new Act(
+                kind == Punishment.Gag ? AdminPlayerAction.Gag : AdminPlayerAction.Mute,
                 p => Active(p) is { } active ? T(viewer, $"menu.punish.un{Key(kind)}", Remaining(viewer, active.ExpiresAt)) : T(viewer, $"menu.punish.{Key(kind)}"),
                 p => Active(p) is not null ? canLift && Human(p!) : canIssue && Issuable(p),
                 (p, session) =>
@@ -320,6 +346,7 @@ public sealed partial class AdminMenuService
         if (CanPunishAny(viewer, Punishment.Silence))
         {
             acts.Add(new Act(
+                AdminPlayerAction.Silence,
                 _ => T(viewer, "menu.punish.silence"),
                 p => Issuable(p) && (p is null || (_comms.GetActive(p, SanctionKind.Gag) is null && _comms.GetActive(p, SanctionKind.Mute) is null)),
                 (p, session) => ReasonPage(viewer, NewDraft(viewer, Punishment.Silence, Ref(p), session.Menu))));
@@ -327,7 +354,7 @@ public sealed partial class AdminMenuService
 
         if (Has(viewer, "admins.commands.slay"))
         {
-            acts.Add(OnServer(_ => T(viewer, "menu.fun.slay"), p => !Immune(viewer, p) && p.IsAlive, (p, _) => Do(() => _control.Slay(issuer, p)), risky: true));
+            acts.Add(OnServer(AdminPlayerAction.Slay, _ => T(viewer, "menu.fun.slay"), p => !Immune(viewer, p) && p.IsAlive, (p, _) => Do(() => _control.Slay(issuer, p)), risky: true));
         }
 
         return [.. acts];
@@ -347,46 +374,67 @@ public sealed partial class AdminMenuService
         if (canFreeze || canUnfreeze)
         {
             acts.Add(OnServer(
+                AdminPlayerAction.Freeze,
                 p => OnOff(viewer, "menu.fun.freeze", _control.IsFrozen(p)),
                 p => Alive(p) && (_control.IsFrozen(p) ? canUnfreeze : canFreeze),
                 (p, _) => Do(() => _control.SetFrozen(issuer, p, !_control.IsFrozen(p)))));
         }
 
-        if (Has(viewer, "admins.commands.slap")) acts.Add(OnServer(_ => T(viewer, "menu.fun.slap"), Alive, (p, _) => Do(() => _control.Slap(issuer, p, 0))));
-        if (Has(viewer, "admins.commands.respawn")) acts.Add(OnServer(_ => T(viewer, "menu.tp.respawn"), Dead, (p, _) => Do(() => _control.Respawn(issuer, p))));
+        if (Has(viewer, "admins.commands.slap")) acts.Add(OnServer(AdminPlayerAction.Slap, _ => T(viewer, "menu.fun.slap"), Alive, (p, _) => Do(() => _control.Slap(issuer, p, 0))));
+        if (Has(viewer, "admins.commands.respawn")) acts.Add(OnServer(AdminPlayerAction.Respawn, _ => T(viewer, "menu.tp.respawn"), Dead, (p, _) => Do(() => _control.Respawn(issuer, p))));
 
         if (Has(viewer, "admins.commands.hrespawn"))
         {
-            acts.Add(OnServer(_ => T(viewer, "menu.tp.hrespawn"), p => Dead(p) && _control.HasDeathPosition(p), (p, _) => Do(() => _control.RespawnAtDeath(issuer, p))));
+            acts.Add(OnServer(
+                AdminPlayerAction.RespawnWhereDied,
+                _ => T(viewer, "menu.tp.hrespawn"),
+                p => Dead(p) && _control.HasDeathPosition(p),
+                (p, _) => Do(() => _control.RespawnAtDeath(issuer, p))));
         }
 
         if (Has(viewer, "admins.commands.team"))
         {
-            acts.Add(OnServer(_ => T(viewer, "menu.tp.team"), Movable, (_, _) => TeamPage(viewer, target)));
+            acts.Add(OnServer(AdminPlayerAction.Team, _ => T(viewer, "menu.tp.team"), Movable, (_, _) => TeamPage(viewer, target)));
         }
         else if (Has(viewer, "admins.commands.swap"))
         {
-            acts.Add(OnServer(_ => T(viewer, "menu.tp.swap"), p => Movable(p) && OnTeam(p), (p, _) => Do(() => _control.Swap(issuer, p))));
+            acts.Add(OnServer(AdminPlayerAction.Swap, _ => T(viewer, "menu.tp.swap"), p => Movable(p) && OnTeam(p), (p, _) => Do(() => _control.Swap(issuer, p))));
         }
 
         if (Has(viewer, "admins.commands.beacon"))
         {
-            acts.Add(OnServer(p => OnOff(viewer, "menu.fun.beacon", _control.HasBeacon(p)), Alive, (p, _) => Do(() => _control.SetBeacon(issuer, p, !_control.HasBeacon(p)))));
+            acts.Add(OnServer(
+                AdminPlayerAction.Beacon,
+                p => OnOff(viewer, "menu.fun.beacon", _control.HasBeacon(p)),
+                Alive,
+                (p, _) => Do(() => _control.SetBeacon(issuer, p, !_control.HasBeacon(p)))));
         }
 
         if (Has(viewer, "admins.commands.drug"))
         {
-            acts.Add(OnServer(p => OnOff(viewer, "menu.fun.drug", _control.IsDrugged(p)), Alive, (p, _) => Do(() => _control.SetDrug(issuer, p, !_control.IsDrugged(p)))));
+            acts.Add(OnServer(
+                AdminPlayerAction.Drug,
+                p => OnOff(viewer, "menu.fun.drug", _control.IsDrugged(p)),
+                Alive,
+                (p, _) => Do(() => _control.SetDrug(issuer, p, !_control.IsDrugged(p)))));
         }
 
         if (Has(viewer, "admins.commands.god"))
         {
-            acts.Add(OnServer(p => OnOff(viewer, "menu.powers.god", _control.IsGod(p)), Alive, (p, _) => Do(() => _control.SetGod(issuer, p, !_control.IsGod(p)))));
+            acts.Add(OnServer(
+                AdminPlayerAction.God,
+                p => OnOff(viewer, "menu.powers.god", _control.IsGod(p)),
+                Alive,
+                (p, _) => Do(() => _control.SetGod(issuer, p, !_control.IsGod(p)))));
         }
 
         if (Has(viewer, "admins.commands.noclip"))
         {
-            acts.Add(OnServer(p => OnOff(viewer, "menu.powers.noclip", _control.IsNoclip(p)), Alive, (p, _) => Do(() => _control.SetNoclip(issuer, p, !_control.IsNoclip(p)))));
+            acts.Add(OnServer(
+                AdminPlayerAction.Noclip,
+                p => OnOff(viewer, "menu.powers.noclip", _control.IsNoclip(p)),
+                Alive,
+                (p, _) => Do(() => _control.SetNoclip(issuer, p, !_control.IsNoclip(p)))));
         }
 
         return [.. acts];
@@ -399,17 +447,25 @@ public sealed partial class AdminMenuService
 
         if (Has(viewer, "admins.commands.goto"))
         {
-            acts.Add(OnServer(_ => T(viewer, "menu.tp.goto"), p => !IsSelf(viewer, p) && p.IsAlive && viewer.IsAlive, (p, _) => Do(() => _control.Goto(issuer, p))));
+            acts.Add(OnServer(
+                AdminPlayerAction.Goto,
+                _ => T(viewer, "menu.tp.goto"),
+                p => !IsSelf(viewer, p) && p.IsAlive && viewer.IsAlive,
+                (p, _) => Do(() => _control.Goto(issuer, p))));
         }
 
         if (Has(viewer, "admins.commands.bring"))
         {
-            acts.Add(OnServer(_ => T(viewer, "menu.tp.bring"), p => !IsSelf(viewer, p) && !Immune(viewer, p) && p.IsAlive && viewer.IsAlive, (p, _) => Do(() => _control.Bring(issuer, p))));
+            acts.Add(OnServer(
+                AdminPlayerAction.Bring,
+                _ => T(viewer, "menu.tp.bring"),
+                p => !IsSelf(viewer, p) && !Immune(viewer, p) && p.IsAlive && viewer.IsAlive,
+                (p, _) => Do(() => _control.Bring(issuer, p))));
         }
 
         if (Has(viewer, "admins.commands.rename"))
         {
-            acts.Add(OnServer(_ => T(viewer, "menu.move.rename"), p => !Immune(viewer, p), (p, session) =>
+            acts.Add(OnServer(AdminPlayerAction.Rename, _ => T(viewer, "menu.move.rename"), p => !Immune(viewer, p), (p, session) =>
             {
                 PrintUsage(session, [$"!rename #{p.UserID} <new_name>"]);
                 return null;
@@ -418,12 +474,12 @@ public sealed partial class AdminMenuService
 
         if (Has(viewer, "admins.commands.hp"))
         {
-            acts.Add(OnServer(_ => T(viewer, "menu.move.hp"), p => !Immune(viewer, p) && p.IsAlive, (_, _) => HealthPage(viewer, target)));
+            acts.Add(OnServer(AdminPlayerAction.Health, _ => T(viewer, "menu.move.hp"), p => !Immune(viewer, p) && p.IsAlive, (_, _) => HealthPage(viewer, target)));
         }
 
         if (Has(viewer, "admins.commands.givemoney") || Has(viewer, "admins.commands.setmoney"))
         {
-            acts.Add(OnServer(_ => T(viewer, "menu.move.money"), p => !Immune(viewer, p) && OnTeam(p), (_, _) => MoneyPage(viewer, target)));
+            acts.Add(OnServer(AdminPlayerAction.Money, _ => T(viewer, "menu.move.money"), p => !Immune(viewer, p) && OnTeam(p), (_, _) => MoneyPage(viewer, target)));
         }
 
         return [.. acts];
@@ -439,7 +495,7 @@ public sealed partial class AdminMenuService
 
     private IMenu TeamPage(IPlayer viewer, PlayerRef target)
     {
-        var (builder, page) = NewPage("admins.players.team", T(viewer, "menu.team.title", target.Name));
+        var (builder, page) = NewPage(AdminMenuIds.PlayerTeam, T(viewer, "menu.team.title", target.Name));
 
         foreach (var team in new[] { Team.T, Team.CT, Team.Spectator })
         {
@@ -458,16 +514,19 @@ public sealed partial class AdminMenuService
             {
                 TextProvider = _ => Live(target) is { } player && TeamOf(player) == team ? T(viewer, "menu.team.current", name) : name,
                 Validating = page.Guard,
+                Tag = new AdminTeamRow(team),
             });
         }
 
-        return Build(builder, page);
+        var menu = Build(builder, page);
+        menu.Tag = RowOf(target);
+        return menu;
     }
 
     // The presets set armour as well, as the command does; anything else is typed.
     private IMenu HealthPage(IPlayer viewer, PlayerRef target)
     {
-        var (builder, page) = NewPage("admins.players.health", T(viewer, "menu.hp.title", target.Name));
+        var (builder, page) = NewPage(AdminMenuIds.PlayerHealth, T(viewer, "menu.hp.title", target.Name));
         var issuer = Issuer.From(viewer);
 
         AddPlayerNotices(builder, viewer, target);
@@ -485,6 +544,7 @@ public sealed partial class AdminMenuService
         })
         {
             Validating = page.Guard,
+            Tag = new AdminHealthRow(health, armor, helmet),
         });
 
         Preset("menu.hp.full_armor", 100, 100, true);
@@ -495,14 +555,19 @@ public sealed partial class AdminMenuService
         {
             if (Live(target) is { } player) PrintUsage(session, [$"!hp #{player.UserID} <health> [armor] [helmet 0|1]"]);
             else _messenger.Chat(viewer, "menu.player_left");
-        }));
+        })
+        {
+            Tag = new AdminActionRow(AdminAction.OtherAmount),
+        });
 
-        return Build(builder, page);
+        var menu = Build(builder, page);
+        menu.Tag = RowOf(target);
+        return menu;
     }
 
     private IMenu MoneyPage(IPlayer viewer, PlayerRef target)
     {
-        var (builder, page) = NewPage("admins.players.money", T(viewer, "menu.money.title", target.Name));
+        var (builder, page) = NewPage(AdminMenuIds.PlayerMoney, T(viewer, "menu.money.title", target.Name));
         var issuer = Issuer.From(viewer);
         var give = Has(viewer, "admins.commands.givemoney");
         var set = Has(viewer, "admins.commands.setmoney");
@@ -522,6 +587,7 @@ public sealed partial class AdminMenuService
         })
         {
             Validating = page.Guard,
+            Tag = new AdminMoneyRow(amount, add),
         });
 
         if (give)
@@ -548,9 +614,14 @@ public sealed partial class AdminMenuService
             if (give) commands.Add($"!givemoney #{player.UserID} <amount>");
             if (set) commands.Add($"!setmoney #{player.UserID} <amount>");
             PrintUsage(session, commands);
-        }));
+        })
+        {
+            Tag = new AdminActionRow(AdminAction.OtherAmount),
+        });
 
-        return Build(builder, page);
+        var menu = Build(builder, page);
+        menu.Tag = RowOf(target);
+        return menu;
     }
 
     #endregion
@@ -602,7 +673,7 @@ public sealed partial class AdminMenuService
 
     private IMenu HistoryPage(IPlayer viewer, PlayerRef target, HistoryLoad history)
     {
-        var (builder, page) = NewPage("admins.players.player.history", T(viewer, "menu.player.history_title", target.Name));
+        var (builder, page) = NewPage(AdminMenuIds.PlayerHistory, T(viewer, "menu.player.history_title", target.Name));
         IMenu? self = null;
 
         string? Header() =>
@@ -624,9 +695,10 @@ public sealed partial class AdminMenuService
 
         void Reload() => LoadHistory(viewer, target, history, Fill);
 
-        builder.Add(new Row(T(viewer, "menu.retry"), _ => Reload()) { VisibleWhen = _ => history.Failed });
+        builder.Add(new Row(T(viewer, "menu.retry"), _ => Reload()) { VisibleWhen = _ => history.Failed, Tag = new AdminActionRow(AdminAction.Retry) });
 
         self = Build(builder, page, Rows);
+        self.Tag = RowOf(target);
         self.Opened += _ => Reload();
         return self;
     }

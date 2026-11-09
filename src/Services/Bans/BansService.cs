@@ -205,7 +205,8 @@ public sealed partial class BansService : IBansManager, IDisposable
     }
 
     /// <summary>
-    /// Bans a SteamID64 or IP that is not on the server. Game thread; the caller has already checked immunity.
+    /// Bans a SteamID64 or an IP address as given, kicking whoever on the server it matches. Game thread; the caller has
+    /// already checked immunity.
     /// </summary>
     /// <param name="name">The player's last known name, when there is one.</param>
     public void BanOffline(Issuer issuer, ulong steamId64, string? ip, BanType type, TimeSpan duration, string reason, bool global, string? name = null)
@@ -289,14 +290,14 @@ public sealed partial class BansService : IBansManager, IDisposable
     /// <summary>
     /// How many bans that apply to this server are active, and how many have ended.
     /// </summary>
-    public async Task<(int Active, int Expired)> CountAsync()
+    public async Task<AdminRecordCounts> CountBansAsync()
     {
-        if (!_database.Enabled) return (0, 0);
+        if (!_database.Enabled) return default;
 
         using var db = _database.Connect();
         var active = await db.CountAsync(Here(RecordStatus.Active)).ConfigureAwait(false);
         var expired = await db.CountAsync(Here(RecordStatus.Expired)).ConfigureAwait(false);
-        return ((int)active, (int)expired);
+        return new AdminRecordCounts((int)active, (int)expired);
     }
 
     public bool AppliesHere(Ban ban) => ban.GlobalBan || ban.Server == _server.Guid;

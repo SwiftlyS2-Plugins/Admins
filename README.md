@@ -21,6 +21,7 @@ One plugin for everything admin related. It replaces `Admins.Core`, `Admins.Bans
 - 🛡️ **Admins and groups** — permissions, immunity levels, groups - all configured in a database
 - 🔨 **Local and Global Bans** — punish players by Name, StatusID, SteamID or IP, on one server or all of them. Works when players are online and offline
 - 🔇 **Gags, mutes and silences** — block text chat, voice or both
+- 🕒 **Sessions** — every connection is kept: which account, from which IP, when and for how long. `!sessions` looks up a player, a SteamID or an IP and shows the other accounts on the same addresses
 - 📋 **One `!admin` menu** — comperhensive and easy to navigate menu for all administrative actions
 - 🎮 **Player commands** — slay, slap, freeze, teleport, health, money, teams, items and effects
 - 🖥️ **Server commands** — restart the round, change the map, `say`, `rcon`, remove dropped weapons
@@ -59,7 +60,7 @@ One plugin for everything admin related. It replaces `Admins.Core`, `Admins.Bans
 | Config | `addons/swiftlys2/configs/plugins/Admins/config.jsonc` |
 | Server GUID | `addons/swiftlys2/data/Admins/server_id.txt` |
 | Translations | `addons/swiftlys2/plugins/Admins/resources/translations/` |
-| Tables | `admins`, `groups`, `servers`, `bans`, `sanctions` and the migration ledger `VersionInfo` |
+| Tables | `admins`, `groups`, `servers`, `bans`, `sanctions`, `player_sessions` and the migration ledger `VersionInfo` |
 
 Keep `server_id.txt` when you reinstall. Admins, groups, bans and gags are tied to the server by that GUID, and a new one detaches the server from all of them.
 
@@ -91,7 +92,11 @@ Plugins built against the old `V1` interfaces need updating, see [API Integratio
 | `Comms.DurationsInSeconds` | as `Bans` | Lengths the menu offers for a gag or mute |
 | `Comms.EnableAdminChat` | `true` | Send team chat starting with `AdminChatStartCharacter` to the admins instead of the team |
 | `Comms.AdminChatStartCharacter` | `@` | The admin chat prefix |
+| `Sessions.Enabled` | `true` | Keep every connection in `player_sessions`, for `!sessions` and so the menu's *Recently left* survives a restart |
+| `Sessions.RetentionDays` | `90` | Days this server's finished sessions are kept. `0` = forever |
 | `Kick.Reasons` | `["AFK", "Mic spam", "Toxic", "Bad name", "Other"]` | Reasons the menu offers for a kick, after *No reason* |
+| `Beacon.Sound` | `admins.beacon_beep` | Sound event a beacon plays from the player on each pulse, for everyone. Players hear it only once your addon ships it: see [Beacon sound](#beacon-sound). Empty = silent |
+| `Beacon.SoundEventsFile` | empty | Sound events file precached so players load `Beacon.Sound`, e.g. `soundevents/admins.vsndevts`. Applies from the next map |
 | `Server.Maps` | `[]` | Maps on the menu's *Change map* page, e.g. `de_dust2` or `ws:3070284539` |
 | `Presence.ConnectMessages` | `true` | Use the plugin's join and leave messages instead of the game's. `!hide` fakes these, so with `false` it announces nothing |
 | `Status.Enabled` | `true` | Answer players' `status` with the lines below, without hidden admins |
@@ -129,16 +134,16 @@ Admin Menu                  !admin
 │     ├─ Control            freeze, slap, respawn, team, beacon, drug, god mode, noclip
 │     ├─ Move and edit      go to, bring, rename, health, money
 │     └─ History (n)        their bans, gags and mutes on every server
-├─ Bans (n active)          Show: Active, Expired or All
+├─ Bans                     Show: All, Active or Expired
 │  ├─ Give ban
 │  └─ <ban>                 summary, remove, change length, their player page
-├─ Comms (n active)         the same for gags and mutes, with Type: All, Gags or Mutes
+├─ Comms                    the same for gags and mutes, with Type: All, Gags or Mutes
 ├─ My tools                 ESP, hide, noclip, god mode, respawn me
 ├─ Server                   restart round, remove dropped weapons, change map
 └─ <other plugins' entries>
 ```
 
-Bans and Comms list the punishments that apply to this server, and need the database. A player's page offers only what applies right now, such as respawn while they are dead; once they leave, it keeps ban, gag, mute and silence, which then act on their SteamID. Remove and change length are offered for active punishments of this server.
+Bans and Comms list the punishments that apply to this server, ended and removed ones included, and need the database. A player's page offers only what applies right now, such as respawn while they are dead; once they leave, it keeps ban, gag, mute and silence, which then act on their SteamID. Remove and change length are offered for active punishments of this server.
 
 ### Giving a punishment
 
@@ -146,15 +151,16 @@ A page per step. Steps that do not apply are skipped.
 
 | Step | Offers |
 |------|--------|
-| Player | The players on the server, **Recently left (n)** with everyone who left in the last 15 minutes, and **Someone else, by SteamID or IP** |
+| Player | The players on the server, **Recently left (n)** with everyone who left this server in the last 15 minutes, a restart included, and **Someone else, by SteamID or IP** |
 | Type | Gag, mute or silence, when you came from **Give gag or mute** |
 | Reason | The configured reasons and **Other reason**. A kick is issued here |
 | Length | The configured lengths and **Other length** |
 | Scope | **This server** or **All servers**, when you may do both |
-| Confirm | **Confirm**, **Summary in chat**, and **Match by** SteamID or IP |
+| Confirm | **Confirm**, **Summary in chat**, and **Match by** SteamID or IP. **Print the command in chat** instead, when part of it is left to type |
 
 - `!ban`, `!gag`, `!mute`, `!silence` and `!kick` without arguments open these steps. `!ban` is this server and `!globalban` every server; the `ip` forms start matched by IP.
-- Nothing is typed into the menu. **Other reason**, **Other length**, **Other amount**, **Other map** and **Someone else** print the chat command to type, with what is known filled in.
+- Nothing is typed into the menu. **Other reason**, **Other length** and **Someone else** go on to the next step, and the last step prints the command with every pick filled in, leaving `<reason>`, `<time>`, `<steamid64>` or `<ip>` for what you type. A kick prints it at **Other reason**. **Other amount** and **Other map** print theirs at once.
+- The printed command names the player by SteamID64, or by IP when matched by IP, so it still works if they leave before you send it.
 - Reason and length start on what you picked last.
 - A player who leaves halfway is still punished, by SteamID.
 - Gagging or muting someone who already is replaces theirs.
@@ -199,12 +205,14 @@ Wherever a command takes `<player>`:
 
 | Form | Matches |
 |------|---------|
-| `name` | The exact name, otherwise a part of a name that matches exactly one player |
-| `#userid` | The player with that user id |
-| `76561198000000000` | The player with that SteamID64 |
+| `name` | A name, ignoring case: one typed in full, otherwise a part of a name that matches exactly one player |
+| `#userid` or `userid` | The player with that user id, the first column of `status` |
+| SteamID | The player with that SteamID: `76561198000000000`, `STEAM_0:1:123` or `[U:1:246]` |
 | `@all`, `@t`, `@ct`, `@me`, `@aim`, ... | SwiftlyS2's target selectors |
 
-Bans, gags, mutes, `!kick`, `!bring` and `!votekick` leave the admin running them out of group selectors such as `@all`. The ban, gag, mute and silence commands also take the SteamID64 of a player who is not on the server, or an IP address for the `ip` forms.
+A full name or a user id wins over a part of a name. When more than one player matches, nobody is targeted and the command asks for more.
+
+Bans, gags, mutes, `!kick`, `!bring` and `!votekick` leave the admin running them out of group selectors such as `@all`. The ban, gag, mute and silence commands punish a SteamID that is not on the server too, so a player who left is still reached. Their `ip` forms take an IP address and nothing else, and refuse it while someone immune to you is connected from it.
 
 ### Admin Management
 
@@ -223,8 +231,8 @@ The last three keep their singular `admins.command.` prefix, so `admins.commands
 |---------|-----------|------------|-------------|
 | `!ban` | `<player\|steamid64> <time> <reason>` | `admins.commands.ban` | Ban by SteamID. |
 | `!globalban` | `<player\|steamid64> <time> <reason>` | `admins.commands.globalban` | Ban by SteamID on every server. |
-| `!banip` | `<player\|ip> <time> <reason>` | `admins.commands.ban` | Ban by IP address. |
-| `!globalbanip` | `<player\|ip> <time> <reason>` | `admins.commands.globalban` | Ban by IP address on every server. |
+| `!banip` | `<ip> <time> <reason>` | `admins.commands.ban` | Ban by IP address. |
+| `!globalbanip` | `<ip> <time> <reason>` | `admins.commands.globalban` | Ban by IP address on every server. |
 | `!unban` | `<steamid64>` | `admins.commands.unban` | Lift the active bans of a SteamID that apply to this server: its own and global ones. |
 | `!unbanip` | `<ip>` | `admins.commands.unban` | Lift the active bans of an IP address that apply to this server. |
 
@@ -240,13 +248,21 @@ A **gag** blocks text chat, a **mute** blocks voice chat and a **silence** does 
 | `!globalgag` | `<player\|steamid64> <time> <reason>` | `admins.commands.globalgag` | Block text chat on every server. |
 | `!globalmute` | `<player\|steamid64> <time> <reason>` | `admins.commands.globalmute` | Block voice chat on every server. |
 | `!globalsilence` | `<player\|steamid64> <time> <reason>` | `admins.commands.globalsilence` | Block both on every server. |
-| `!gagip`, `!muteip`, `!silenceip` | `<player\|ip> <time> <reason>` | `admins.commands.gag`, `.mute`, `.silence` | The same, by IP address. |
-| `!globalgagip`, `!globalmuteip`, `!globalsilenceip` | `<player\|ip> <time> <reason>` | `admins.commands.globalgag`, `.globalmute`, `.globalsilence` | The same, by IP address on every server. |
+| `!gagip`, `!muteip`, `!silenceip` | `<ip> <time> <reason>` | `admins.commands.gag`, `.mute`, `.silence` | The same, by IP address. |
+| `!globalgagip`, `!globalmuteip`, `!globalsilenceip` | `<ip> <time> <reason>` | `admins.commands.globalgag`, `.globalmute`, `.globalsilence` | The same, by IP address on every server. |
 | `!ungag` | `<player\|steamid64>` | `admins.commands.ungag` | Lift the active gags that apply to this server. |
 | `!unmute` | `<player\|steamid64>` | `admins.commands.unmute` | Lift the active mutes that apply to this server. |
 | `!unsilence` | `<player\|steamid64>` | `admins.commands.unsilence` | Lift both. |
 
-The old plugin's `o` forms still work, the same as the commands above: `!gago`, `!muteo`, `!silenceo` and their `global` forms take a SteamID64, and `!gagipo`, `!muteipo`, `!silenceipo` and their `global` forms an IP address.
+### Sessions
+
+Every connection is kept in `player_sessions`: the account, its name and IP address, the server, and when it started and ended. Nothing is kept while `Sessions.Enabled` or `UseDatabase` is off.
+
+| Command | Arguments | Permission | Description |
+|---------|-----------|------------|-------------|
+| `!sessions` | `[player\|steamid64\|ip\|name]` | `admins.commands.sessions` | Without an argument, the latest connections to this server. For a player or SteamID, their latest connections on every server, how often and how long they played, and the other accounts that connected from their IP addresses. For an IP address, every account that connected from it. A name that is not on the server is looked for in the latest 5000 connections. |
+
+`!sessions` shows IP addresses, so give `admins.commands.sessions` only to staff who may see them. It answers in chat; typed as `sw_sessions` in the console, it answers there.
 
 ### Player Commands
 
@@ -261,7 +277,7 @@ Every player command except `!goto`, which only moves you, respects immunity.
 | `!bury` / `!unbury` | `<player> [depth]` | `admins.commands.bury` / `admins.commands.unbury` | Move a player down (default 10 units) / up (default 15 units). |
 | `!noclip` | `[player]` | `admins.commands.noclip` | Toggle noclip. Without a player, toggles it for yourself. |
 | `!god` | `<player>` | `admins.commands.god` | Toggle god mode. |
-| `!beacon` | `[player]` | `admins.commands.beacon` | Toggle a beacon. Without a player, toggles it for yourself. |
+| `!beacon` | `[player]` | `admins.commands.beacon` | Toggle a beacon: a ring in the player's team color that grows from them every 1.5 seconds, with a [sound](#beacon-sound). Without a player, toggles it for yourself. |
 | `!drug` | `<player>` | `admins.commands.drug` | Toggle a drugged screen: a shifting color tint and a shake, until it is toggled off or the player dies. |
 | `!setspeed`, `!speed` | `<player> [multiplier]` | `admins.commands.setspeed` | Set the speed multiplier (0.1-10, default 1). |
 | `!setgravity`, `!gravity` | `<player> [multiplier]` | `admins.commands.setgravity` | Set the gravity multiplier (0.1-10, default 1). |
@@ -282,6 +298,69 @@ Every player command except `!goto`, which only moves you, respects immunity.
 | `!giveitem`, `!give` | `<player> <item_name>` | `admins.commands.giveitem` | Give an item by its name, e.g. `weapon_ak47`. |
 | `!melee` | `<player>` | `admins.commands.melee` | Strip a player's weapons and give a knife. |
 | `!disarm` | `<player>` | `admins.commands.disarm` | Strip all of a player's weapons. |
+
+#### Beacon sound
+
+Each beacon pulse plays `Beacon.Sound` from the player, for everyone. That sound event is not part of the game, so the beacon is silent until your server's addon ships it.
+
+To add it, put this in a sound events file of your addon, for example `soundevents/admins.vsndevts`, then compile and publish the addon as usual. The beep itself is a stock CS2 sound, so the event is all the addon needs:
+
+```
+<!-- kv3 encoding:text:version{e21c7f3c-8a33-41c5-9977-a76d3a32aa0d} format:generic:version{7412167c-06e9-4698-aff2-e63eb59037e7} -->
+{
+    "admins.beacon_beep" = {
+        "type" = "csgo_mega"
+        "vsnd_files_track_01" = "sounds/tools/sfm/beep.vsnd"
+        "volume" = 0.8
+        "pitch" = 1.0
+        "mixgroup" = "Default"
+        "reverb_wet" = 0.0
+
+        "instance_limit" = 0.0
+        "block_matching_events" = false
+        "block_match_entity" = false
+        "block_duration" = 0.0
+        "block_distance" = 0.0
+
+        // Directional / 3D positioning
+        "use_world_position" = true
+        "use_entity_position_if_local_player" = true
+        "set_child_position" = true
+        "display_broadcast" = true
+
+        // Occlusion
+        "use_baked_occlusion" = true
+        "occlusion_intensity" = 0.375
+        "occlusion_frequency_scale" = 0.998
+
+        // Distance-based volume falloff
+        "use_distance_volume_mapping_curve" = true
+        "distance_effect_mix" = 1.0
+        "distance_volume_mapping_curve" =
+        [
+            [ 0.0,        1.0, 0.0, 0.0, 2.0, 3.0 ],
+            [ 99999999.0, 1.0, 0.0, 0.0, 2.0, 3.0 ],
+        ]
+
+        // Stereo-to-mono blending with distance (key for directionality of stereo source files)
+        "use_distance_unfiltered_stereo_mapping_curve" = true
+        "distance_unfiltered_stereo_mapping_curve" =
+        [
+            [ 50.0, 1.0, 0.0, 0.0, 2.0, 3.0 ],
+            [ 80.0, 0.0, 0.0, 0.0, 2.0, 3.0 ],
+        ]
+
+        "position_offset" =
+        [
+            0.0,
+            0.0,
+            20.0,
+        ]
+    }
+}
+```
+
+Then set `Beacon.SoundEventsFile` to that file's path, `soundevents/admins.vsndevts` here, so players load it; it applies from the next map. The `block_*` and `instance_limit` keys stop the game dropping repeats of the same event from the same player, which `!beacon @all` makes many of. Another event name works too, as long as `Beacon.Sound` matches it.
 
 ### Server Commands
 

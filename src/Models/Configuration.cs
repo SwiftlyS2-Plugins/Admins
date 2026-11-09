@@ -7,6 +7,7 @@ using Admins.Services.Esp;
 using Admins.Services.PlayerControl;
 using Admins.Services.Presence;
 using Admins.Services.ServerControl;
+using Admins.Services.Sessions;
 
 namespace Admins.Models;
 
@@ -30,7 +31,11 @@ public sealed class Configuration
 
     public CommsConfiguration Comms { get; set; } = new();
 
+    public SessionsConfiguration Sessions { get; set; } = new();
+
     public KickConfiguration Kick { get; set; } = new();
+
+    public BeaconConfiguration Beacon { get; set; } = new();
 
     public ServerControlConfiguration Server { get; set; } = new();
 

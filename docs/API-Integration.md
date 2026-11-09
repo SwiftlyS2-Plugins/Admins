@@ -208,6 +208,30 @@ if (!_admins.CanTarget(caller, target.SteamID))
 
 ---
 
+## 8. Draw `!admin` in a menu renderer
+
+A renderer can lay out Admins' pages from data: match a page by its id in `AdminMenuIds`, read what it is about from the menu's `Tag`, and what each row stands for from its component's `Tag`. See [Menu skins](API-Reference.md#menu-skins) for every id and tag.
+
+```csharp
+if (menu.Id == AdminMenuIds.Players)
+{
+    var listed = _menu.GetListedPlayers(viewer);
+    foreach (var component in menu.GetComponents(MenuRegion.Body))
+    {
+        if ((component as MenuComponentBase)?.Tag is not AdminPlayerRow row) continue;
+        var live = listed.FirstOrDefault(p => p.SessionId == row.SessionId);   // null once they left
+        var state = live is null ? default : _menu.GetPlayerState(live);
+        // draw the row from live.Controller, state and _comms.GetActiveSanction(live, ...)
+    }
+}
+```
+
+- A row's `Tag` is fixed when the page is built. Read what changes while a page is open (frozen, muted, a vote's tally) through the API each time you draw.
+- A vote's ballot (`AdminMenuIds.Vote`) carries the running `IAdminVote`; its title is the question in the voter's language.
+- If your plugin must load without Admins, keep `AdminPlayerState`, `AdminRecordCounts` and the contract enums out of fields, lambdas included, and continue the `…Async` tasks with `ContinueWith` rather than `await`: each compiles to a type that needs the contract to load.
+
+---
+
 ## Upgrading from V1
 
 | V1 | V2 |

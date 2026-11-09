@@ -99,6 +99,7 @@ public interface IGroup
 | `Task<IBan> AddBanAsync(IBan ban)` | Store the ban, kick the online players it matches and raise `OnAdminBanAdded`. Returns the stored copy |
 | `Task UpdateBanAsync(IBan ban)` | Overwrite the row with the same `Id` and raise `OnAdminBanUpdated`. While the ban is active, it kicks the players it matches |
 | `Task RemoveBanAsync(IBan ban)` | Lift the ban by expiring it now. The row stays as history |
+| `Task<AdminRecordCounts> CountBansAsync()` | The bans that apply to this server, active and expired, as the Bans page counts them. Zero without a database |
 
 | Event | Raised when |
 |-------|-------------|
@@ -139,6 +140,7 @@ A gag blocks text chat and a mute blocks voice. A silence is stored as one of ea
 | `Task<ISanction> AddSanctionAsync(ISanction sanction)` | Store the sanction, apply it to the online players it matches and raise `OnAdminSanctionAdded`. Returns the stored copy |
 | `Task UpdateSanctionAsync(ISanction sanction)` | Overwrite the row with the same `Id`, reload the sanctions of the players online and raise `OnAdminSanctionUpdated` |
 | `Task RemoveSanctionAsync(ISanction sanction)` | Lift the sanction by expiring it now. The row stays as history |
+| `Task<AdminRecordCounts> CountSanctionsAsync(SanctionKind? sanctionKind = null)` | The sanctions of a kind (`null`: both) that apply to this server, as the Comms page counts them. Zero without a database |
 
 | Event | Raised when |
 |-------|-------------|
@@ -181,6 +183,10 @@ Call from the game thread.
 | `void UnregisterSubmenu(string id)` | Remove the entry |
 | `IMenu CreateAdminMenu(IPlayer player)` | Build the admin menu for a player without opening it |
 | `void OpenAdminMenu(IPlayer player)` | Build the admin menu and open it |
+| `IReadOnlyList<IPlayer> GetListedPlayers(IPlayer viewer)` | The players the viewer's menu lists: everyone but the server's TV and hidden admins the viewer may not see |
+| `AdminPlayerState GetPlayerState(IPlayer player)` | What the admin tools have set on a player (hidden, frozen, noclip, god, beacon, drugged, ESP) |
+| `IReadOnlyList<AdminRecentRow> GetRecentPlayers()` | Humans who left this server in the last 15 minutes, newest first, less anyone who came back. With the database on, the list survives a restart |
+| `bool IsMapChangePending()` | True for the few seconds between ordering a map change and the change |
 
 | `RegisterSubmenu` parameter | Meaning |
 |-----------------------------|---------|
@@ -193,6 +199,47 @@ Entries follow the built-in ones, in registration order; registering an `id` aga
 
 ---
 
+## Menu skins
+
+For a menu renderer that draws `!admin` from data instead of parsing its text, as CustomHUD does. Every page has a stable id in `AdminMenuIds`; every row carries what it stands for as its component's `Tag`, and every page what it is about as the menu's `Tag`. A row's `Tag` is fixed when the page is built; what changes while a page is open (frozen, muted, the picks so far, the vote's tally) is read through the API when drawn. Admins' own rows stay plain text for every other renderer.
+
+| Page | Id | Menu `Tag` |
+|------|----|------------|
+| The admin menu | `admins.main` | - |
+| Players | `admins.players` | `IAdminPlayerList` |
+| A player, and their Punish, Control, Move and History pages | `admins.players.player`, `…player.punish`, `…player.control`, `…player.move`, `…player.history` | `AdminPlayerRow` |
+| A player's team, health and money pages | `admins.players.team`, `admins.players.health`, `admins.players.money` | `AdminPlayerRow` |
+| Bans, Comms | `admins.bans`, `admins.comms` | `IAdminRecordList` |
+| A record | `admins.bans.record`, `admins.comms.record` | `AdminRecordRow` |
+| A punishment's steps | `admins.bans.give.<step>`, `admins.comms.give.<step>`, `admins.kick.<step>`, the step from `AdminFlowSteps` | `AdminFlowPage` |
+| My tools, Server and its pages | `admins.tools`, `admins.server`, `admins.server.restart`, `admins.server.map`, `admins.server.map_confirm` | the map confirm page: `AdminMapRow` |
+| A vote's ballot | `admins.vote` | `IAdminVote` |
+| A registered entry that failed to build | `admins.notice` | - |
+
+| Row `Tag` | Stands for |
+|-----------|------------|
+| `AdminPlayerRow(PlayerId, SessionId, SteamId64, Name)` | A player. `SessionId` identifies the connection, so a reconnect is a new row; `SteamId64` is 0 for a bot |
+| `AdminRecentRow(SteamId64, Name, LeftAt)` | Someone who left in the last few minutes, when picking who to punish |
+| `AdminPlayerGroupRow(AdminPlayerGroup)` | A link on a player's page: Punish, Control, Move or History |
+| `AdminPlayerActionRow(AdminPlayerAction)` | Something to do to the player. Which way a two-way one goes (mute or unmute) is read when drawn |
+| `AdminTeamRow(Team)`, `AdminHealthRow(Health, Armor, Helmet)`, `AdminMoneyRow(Amount, Add)` | A team, a health preset, a money preset |
+| `AdminRecordRow` | A ban (`Ban`) or a gag or mute (`Sanction`). Two are equal when they are the same record |
+| `AdminKindRow(AdminPunishment)`, `AdminReasonRow(Reason)`, `AdminLengthRow(Length)`, `AdminScopeRow(Global)` | A punishment step's choices. A `null` reason is a kick's "no reason"; `TimeSpan.Zero` is permanent |
+| `AdminRestartRow(DelaySeconds)`, `AdminMapRow(Map)` | A restart delay, a map |
+| `AdminVoteOptionRow(Index)` | An answer on a ballot, indexing `IAdminVote.Options` |
+| `AdminActionRow(AdminAction)` | A control that is not one of the page's items: a filter, `Give`, `Retry`, `Confirm`, `PrintCommand`, a tool |
+
+| Page `Tag` | Members |
+|------------|---------|
+| `IAdminPlayerList` | `Team?` the team shown, `null` for everyone |
+| `IAdminRecordList` | `Comms`, the `Status` and `Kind` shown, `Counts` (`null` until counted), `Loading`, `Failed` |
+| `AdminFlowPage(Step, Draft)` | The step shown, and the `IAdminDraft`: `Kind`, `Target`, `ByIp`, `HasReason`, `Reason`, `Length`, `Global`, the `Record` whose length is being changed, the `Steps` in order, `TypedInChat`, and `Preview(length)`, what the player will be shown. `TypedInChat` holds the steps no listed choice fitted (the target, the reason, the length): they read as not picked, and the last step offers `PrintCommand`, which prints the command filled in with the rest, instead of `Confirm` |
+| `IAdminVote` | `Kind` (`Poll`, `Kick`, `Map`), `StartedBy`, the kick's `Target`, `Question(viewer)` (the ballot's title), `Options(viewer)` (a kick's are yes, then no), `Votes(option)`, `Voters`, `Voted`, `SecondsLeft` |
+
+`AdminPlayerState` and `AdminRecordCounts` (`Active`, `Expired`, `All`) are value types: hold them in locals, not in fields, if your plugin must load without Admins.
+
+---
+
 ## Enums
 
 | Enum | Values |
@@ -202,3 +249,9 @@ Entries follow the built-in ones, in registration order; registering an `id` aga
 | `BanType` | `SteamID` = 1, `IP` = 2 |
 | `SanctionType` | `SteamID` = 1, `IP` = 2 |
 | `SanctionKind` | `Gag` = 1 (text chat), `Mute` = 2 (voice) |
+| `AdminPunishment` | `Gag`, `Mute`, `Silence` (both), `Kick`, `Ban` |
+| `AdminFlowStep` | `Target`, `Kind`, `Reason`, `Length`, `Scope`, `Confirm` |
+| `AdminPlayerGroup` | `Punish`, `Control`, `Move`, `History` |
+| `AdminPlayerAction` | `Kick`, `Ban`, `Mute`, `Gag`, `Silence`, `Slay`, `Freeze`, `Slap`, `Respawn`, `RespawnWhereDied`, `Team`, `Swap`, `Beacon`, `Drug`, `God`, `Noclip`, `Goto`, `Bring`, `Rename`, `Health`, `Money` |
+| `AdminVoteKind` | `Poll`, `Kick` (a tie keeps the player), `Map` |
+| `AdminAction` | The controls an `AdminActionRow` stands for; each value's doc comment names its page |

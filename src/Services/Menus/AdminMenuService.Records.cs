@@ -5,6 +5,7 @@ using Admins.Shared;
 using Microsoft.Extensions.Logging;
 using SwiftlyS2.Shared.Menu;
 using SwiftlyS2.Shared.Players;
+using Punishment = Admins.Contract.AdminPunishment;
 
 namespace Admins.Services.Menus;
 
@@ -12,7 +13,8 @@ public sealed partial class AdminMenuService
 {
     private const int ListLimit = 100;
 
-    private static readonly RecordStatus[] StatusFilters = [RecordStatus.Active, RecordStatus.Expired, RecordStatus.All];
+    // All first: the header counts both, so a list opening on active ones looks like it lost the rest.
+    private static readonly RecordStatus[] StatusFilters = [RecordStatus.All, RecordStatus.Active, RecordStatus.Expired];
     private static readonly SanctionKind?[] KindFilters = [null, SanctionKind.Gag, SanctionKind.Mute];
 
     /// <summary>A ban or sanction the way the menu shows it.</summary>
@@ -31,9 +33,11 @@ public sealed partial class AdminMenuService
         long ExpiresAt,
         bool Global);
 
-    private sealed class ListView
+    private sealed class ListView : IAdminRecordList
     {
-        public RecordStatus Status { get; set; } = RecordStatus.Active;
+        public bool Comms { get; init; }
+
+        public RecordStatus Status { get; set; } = StatusFilters[0];
 
         public SanctionKind? Kind { get; set; }
 
@@ -49,6 +53,8 @@ public sealed partial class AdminMenuService
         public int Active { get; set; } = -1;
 
         public int Expired { get; set; } = -1;
+
+        public AdminRecordCounts? Counts => Active < 0 ? null : new AdminRecordCounts(Active, Expired);
     }
 
     private bool BanListAvailable(IPlayer viewer) => CanLift(viewer, Punishment.Ban) || CanPunishAny(viewer, Punishment.Ban);
@@ -59,12 +65,15 @@ public sealed partial class AdminMenuService
     {
         Func<Func<IMenu>, IMenuComponent>? give = CanPunishAny(viewer, Punishment.Ban)
             ? list => new Link(T(viewer, "menu.bans.give"), _ => TargetPage(viewer, NewDraft(viewer, Punishment.Ban, null, list())))
+            {
+                Tag = new AdminActionRow(AdminAction.Give),
+            }
             : null;
 
-        return RecordsPage(viewer, "admins.bans", T(viewer, "menu.bans.title"), kinds: false, give, async (status, _) =>
+        return RecordsPage(viewer, AdminMenuIds.Bans, T(viewer, "menu.bans.title"), kinds: false, give, async (status, _) =>
         {
             var bans = await _bans.ListAsync(status, ListLimit).ConfigureAwait(false);
-            var (active, expired) = await _bans.CountAsync().ConfigureAwait(false);
+            var (active, expired) = await _bans.CountBansAsync().ConfigureAwait(false);
             return (bans.Cast<object>().ToList(), active, expired);
         });
     }
@@ -76,12 +85,15 @@ public sealed partial class AdminMenuService
         // With one kind allowed there is nothing to ask after the player.
         Func<Func<IMenu>, IMenuComponent>? give = kinds.Count == 0
             ? null
-            : list => new Link(T(viewer, "menu.comms.give"), _ => TargetPage(viewer, NewDraft(viewer, kinds[0], null, list(), picksKind: kinds.Count > 1)));
+            : list => new Link(T(viewer, "menu.comms.give"), _ => TargetPage(viewer, NewDraft(viewer, kinds[0], null, list(), picksKind: kinds.Count > 1)))
+            {
+                Tag = new AdminActionRow(AdminAction.Give),
+            };
 
-        return RecordsPage(viewer, "admins.comms", T(viewer, "menu.comms.title"), kinds: true, give, async (status, kind) =>
+        return RecordsPage(viewer, AdminMenuIds.Comms, T(viewer, "menu.comms.title"), kinds: true, give, async (status, kind) =>
         {
             var sanctions = await _comms.ListAsync(status, kind, ListLimit).ConfigureAwait(false);
-            var (active, expired) = await _comms.CountAsync(kind).ConfigureAwait(false);
+            var (active, expired) = await _comms.CountSanctionsAsync(kind).ConfigureAwait(false);
             return (sanctions.Cast<object>().ToList(), active, expired);
         });
     }
@@ -100,7 +112,7 @@ public sealed partial class AdminMenuService
         Func<RecordStatus, SanctionKind?, Task<(IReadOnlyList<object> Records, int Active, int Expired)>> load)
     {
         var (builder, page) = NewPage(id, title);
-        var view = new ListView();
+        var view = new ListView { Comms = kinds };
         IMenu? self = null;
 
         builder.AddHeader(Line(_ => ListHeader(viewer, view), _ => ListHeader(viewer, view) is not null));
@@ -119,6 +131,7 @@ public sealed partial class AdminMenuService
         })
         {
             TextProvider = _ => T(viewer, $"menu.list.show_{view.Status.ToString().ToLowerInvariant()}", CountLabel(view)),
+            Tag = new AdminActionRow(AdminAction.StatusFilter),
         });
         page.RowsAt++;
 
@@ -138,11 +151,16 @@ public sealed partial class AdminMenuService
                     SanctionKind.Mute => "menu.list.type_mutes",
                     _ => "menu.list.type_all",
                 }),
+                Tag = new AdminActionRow(AdminAction.KindFilter),
             });
             page.RowsAt++;
         }
 
-        builder.Add(new Row(T(viewer, "menu.retry"), _ => Reload(fresh: false)) { VisibleWhen = _ => view.Failed && !view.Loading });
+        builder.Add(new Row(T(viewer, "menu.retry"), _ => Reload(fresh: false))
+        {
+            VisibleWhen = _ => view.Failed && !view.Loading,
+            Tag = new AdminActionRow(AdminAction.Retry),
+        });
 
         void Reload(bool fresh)
         {
@@ -188,6 +206,7 @@ public sealed partial class AdminMenuService
         }
 
         self = Build(builder, page);
+        self.Tag = view;
         self.Opened += _ => Reload(fresh: false);
         return self;
     }
@@ -244,7 +263,12 @@ public sealed partial class AdminMenuService
         _ => throw new ArgumentException("Not a ban or a sanction.", nameof(record)),
     };
 
-    private static RowKey RecordKey(RecordView record) => new(record.Kind == Punishment.Ban ? "ban" : "sanction", record.Id);
+    private static AdminRecordRow RecordRowOf(object record) => record switch
+    {
+        Ban ban => new AdminRecordRow(ban),
+        Sanction sanction => new AdminRecordRow(sanction),
+        _ => throw new ArgumentException("Not a ban or a sanction.", nameof(record)),
+    };
 
     // The SteamID or IP only when there is no name.
     private static string Name(RecordView record) => string.IsNullOrWhiteSpace(record.Name) || record.Name == "Unknown" ? record.Subject : record.Name;
@@ -258,7 +282,7 @@ public sealed partial class AdminMenuService
             TextProvider = _ => r.Kind == Punishment.Ban
                 ? T(viewer, "menu.bans.row", r.Id, Name(r), Remaining(viewer, r.ExpiresAt))
                 : T(viewer, "menu.comms.row", r.Id, Name(r), KindName(viewer, r.Kind), Remaining(viewer, r.ExpiresAt)),
-            Tag = RecordKey(r),
+            Tag = RecordRowOf(record),
         };
     }
 
@@ -269,7 +293,7 @@ public sealed partial class AdminMenuService
 
         return new Link(text, _ => RecordPage(viewer, record, sheet, reload, fromPlayer: true))
         {
-            Tag = RecordKey(r),
+            Tag = RecordRowOf(record),
         };
     }
 
@@ -278,13 +302,13 @@ public sealed partial class AdminMenuService
     private IMenu RecordPage(IPlayer viewer, object record, IMenu land, Action reload, bool fromPlayer)
     {
         var r = ViewOf(record);
-        var (builder, page) = NewPage(r.Kind == Punishment.Ban ? "admins.bans.record" : "admins.comms.record", T(viewer, $"menu.record.title_{Key(r.Kind)}", r.Id));
+        var (builder, page) = NewPage(r.Kind == Punishment.Ban ? AdminMenuIds.BanRecord : AdminMenuIds.CommsRecord, T(viewer, $"menu.record.title_{Key(r.Kind)}", r.Id));
 
         // A player's history includes other servers' records, which are theirs to change.
         bool Changeable() =>
             (r.ExpiresAt == 0 || r.ExpiresAt > AdminsDatabase.NowMs) && (record is Ban ban ? _bans.AppliesHere(ban) : _comms.AppliesHere((Sanction)record));
 
-        builder.Add(new Row(T(viewer, "menu.record.summary"), _ => SummarizeRecord(viewer, r)));
+        builder.Add(new Row(T(viewer, "menu.record.summary"), _ => SummarizeRecord(viewer, r)) { Tag = new AdminActionRow(AdminAction.Summary) });
 
         if (CanLift(viewer, r.Kind))
         {
@@ -298,6 +322,7 @@ public sealed partial class AdminMenuService
                 Style = DangerStyle,
                 VisibleWhen = _ => Changeable(),
                 Validating = page.Guard,
+                Tag = new AdminActionRow(AdminAction.Remove),
             });
         }
 
@@ -307,6 +332,7 @@ public sealed partial class AdminMenuService
             builder.Add(new Link(T(viewer, "menu.record.change_length"), _ => LengthPage(viewer, LengthDraft(r.Kind, target, record, r.Global, land)))
             {
                 VisibleWhen = _ => Changeable(),
+                Tag = new AdminActionRow(AdminAction.ChangeLength),
             });
         }
 
@@ -315,10 +341,13 @@ public sealed partial class AdminMenuService
             builder.Add(new Link(T(viewer, "menu.record.open_player"), _ => OnlineBySteamId((ulong)r.SteamId64) is { } player ? PlayerPage(viewer, PlayerRef.Of(player), land) : null)
             {
                 VisibleWhen = _ => OnlineBySteamId((ulong)r.SteamId64) is not null,
+                Tag = new AdminActionRow(AdminAction.OpenPlayer),
             });
         }
 
-        return Build(builder, page);
+        var menu = Build(builder, page);
+        menu.Tag = RecordRowOf(record);
+        return menu;
     }
 
     private string Ends(IPlayer viewer, long expiresAt)

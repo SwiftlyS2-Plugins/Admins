@@ -311,7 +311,8 @@ public sealed partial class CommsService : ICommsManager, IDisposable
     }
 
     /// <summary>
-    /// Sanctions a SteamID64 or IP that is not on the server. Game thread; the caller has already checked immunity.
+    /// Sanctions a SteamID64 or an IP address as given, applying it to whoever on the server it matches. Game thread; the
+    /// caller has already checked immunity.
     /// </summary>
     /// <param name="name">The player's last known name, when there is one.</param>
     public void SanctionOffline(Issuer issuer, ulong steamId64, string? ip, CommsAction action, SanctionType type, TimeSpan duration, string reason, bool global, string? name = null)
@@ -470,14 +471,14 @@ public sealed partial class CommsService : ICommsManager, IDisposable
     /// <summary>
     /// How many sanctions that apply to this server are active, and how many have ended.
     /// </summary>
-    public async Task<(int Active, int Expired)> CountAsync(SanctionKind? kind)
+    public async Task<AdminRecordCounts> CountSanctionsAsync(SanctionKind? sanctionKind = null)
     {
-        if (!_database.Enabled) return (0, 0);
+        if (!_database.Enabled) return default;
 
         using var db = _database.Connect();
-        var active = await db.CountAsync(Here(RecordStatus.Active, kind)).ConfigureAwait(false);
-        var expired = await db.CountAsync(Here(RecordStatus.Expired, kind)).ConfigureAwait(false);
-        return ((int)active, (int)expired);
+        var active = await db.CountAsync(Here(RecordStatus.Active, sanctionKind)).ConfigureAwait(false);
+        var expired = await db.CountAsync(Here(RecordStatus.Expired, sanctionKind)).ConfigureAwait(false);
+        return new AdminRecordCounts((int)active, (int)expired);
     }
 
     public bool AppliesHere(Sanction sanction) => sanction.GlobalSanction || sanction.Server == _server.Guid;

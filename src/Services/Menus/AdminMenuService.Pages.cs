@@ -5,6 +5,7 @@ using Admins.Shared;
 using SwiftlyS2.Shared.Menu;
 using SwiftlyS2.Shared.Menu.Components;
 using SwiftlyS2.Shared.Players;
+using Punishment = Admins.Contract.AdminPunishment;
 
 namespace Admins.Services.Menus;
 
@@ -16,18 +17,6 @@ public sealed partial class AdminMenuService
     private static readonly MenuTextStyle InfoStyle = MenuTextStyle.Default.WithSize(MenuTextSize.Small).WithColor("#C8C8C8");
     private static readonly MenuTextStyle WarnStyle = MenuTextStyle.Default.WithSize(MenuTextSize.Small).WithColor("#FFB74D");
     private static readonly MenuTextStyle DangerStyle = MenuTextStyle.Default.WithSize(MenuTextSize.SmallMedium).WithColor("#FF6B6B");
-
-    private enum Punishment
-    {
-        Gag,
-        Mute,
-        Silence,
-        Kick,
-        Ban,
-    }
-
-    /// <summary>Identifies a list entry across rebuilds, so the cursor returns to the same player or record.</summary>
-    private readonly record struct RowKey(string Kind, long Id);
 
     private sealed class PageState
     {
@@ -61,7 +50,7 @@ public sealed partial class AdminMenuService
     }
 
     /// <summary>A row that opens a page; returning null stays here. The page goes back here when it closes.</summary>
-    private sealed class Link(string text, Func<IMenuSession, IMenu?> next) : SubmenuComponent(text, next)
+    private sealed class Link(string text, Func<IMenuSession, IMenu?> next, string? id = null) : SubmenuComponent(text, next, id)
     {
         public override ValueTask<bool> HandleActionAsync(MenuActionContext context) =>
             Jump(context) ? ValueTask.FromResult(true) : base.HandleActionAsync(context);
@@ -183,10 +172,10 @@ public sealed partial class AdminMenuService
         return false;
     }
 
-    private Link Cached(string text, Func<IMenu> build)
+    private static Link Cached(string text, Func<IMenu> build, string? id = null)
     {
         IMenu? menu = null;
-        return new Link(text, _ => menu ??= build());
+        return new Link(text, _ => menu ??= build(), id);
     }
 
     private static TextComponent Line(Func<IMenuSession, string?> text, Func<IMenuSession, bool>? visible = null, MenuTextStyle? style = null) => new()
@@ -217,10 +206,19 @@ public sealed partial class AdminMenuService
     }
 
     // Anything typed is entered as a whole chat command: chat plugins that stop chat messages would swallow captured input.
-    private void PrintUsage(IMenuSession session, IEnumerable<string> commands, string? hintKey = null)
+    private void PrintUsage(IMenuSession session, IEnumerable<string> commands)
     {
-        foreach (var command in commands) _messenger.Chat(session.Player, "menu.usage", command);
-        if (hintKey is not null) _messenger.Chat(session.Player, hintKey);
+        var player = session.Player;
+        var timed = false;
+
+        _messenger.Chat(player, "menu.usage");
+        foreach (var command in commands)
+        {
+            _messenger.Chat(player, "menu.usage_command", command);
+            timed |= command.Contains("<time>", StringComparison.Ordinal);
+        }
+
+        if (timed) _messenger.Chat(player, "menu.usage_time");
         CloseMenu(session);
     }
 

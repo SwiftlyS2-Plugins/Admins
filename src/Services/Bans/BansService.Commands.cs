@@ -39,7 +39,7 @@ public sealed partial class BansService
 
         if (args.Length < 3)
         {
-            _messenger.Syntax(issuer, command, type == BanType.IP ? "<player|ip> <time> <reason>" : "<player|steamid64> <time> <reason>");
+            _messenger.Syntax(issuer, command, type == BanType.IP ? "<ip> <time> <reason>" : "<player|steamid64> <time> <reason>");
             return;
         }
 
@@ -50,6 +50,13 @@ public sealed partial class BansService
         }
 
         var reason = string.Join(' ', args.Skip(2)).Trim();
+
+        if (type == BanType.IP)
+        {
+            BanIp(issuer, args[0], duration, reason, global);
+            return;
+        }
+
         var players = _targets.Find(issuer.Player, args[0], out var error, excludeCaller: true);
 
         if (players.Count > 0)
@@ -76,18 +83,6 @@ public sealed partial class BansService
             return;
         }
 
-        if (type == BanType.IP)
-        {
-            if (!Net.IsIp(args[0]))
-            {
-                _messenger.Reply(issuer, "command.player_not_found", args[0]);
-                return;
-            }
-
-            BanOffline(issuer, 0, args[0], BanType.IP, duration, reason, global);
-            return;
-        }
-
         if (!SteamIds.TryParse(args[0], out var steamId))
         {
             _messenger.Reply(issuer, "command.player_not_found", args[0]);
@@ -101,6 +96,28 @@ public sealed partial class BansService
         }
 
         BanOffline(issuer, steamId, null, BanType.SteamID, duration, reason, global);
+    }
+
+    // An IP ban kicks everyone connected from the address, so each of them has to be targetable.
+    private void BanIp(Issuer issuer, string address, TimeSpan duration, string reason, bool global)
+    {
+        if (!Net.IsIp(address))
+        {
+            _messenger.Reply(issuer, "command.invalid_ip", address);
+            return;
+        }
+
+        var ip = Net.NormalizeIp(address);
+        var players = _targets.OnIp(ip);
+
+        if (players.FirstOrDefault(p => !_access.CanTarget(issuer.Player, p.SteamID)) is { } immune)
+        {
+            _messenger.Reply(issuer, "command.target_has_immunity", Names.Of(immune), _access.GetImmunity(immune.SteamID));
+            return;
+        }
+
+        var known = players.Count == 1 ? players[0] : null;
+        BanOffline(issuer, known?.SteamID ?? 0, ip, BanType.IP, duration, reason, global, known is null ? null : Names.Of(known));
     }
 
     // Lifts only bans that apply here; another server's local ban is not this server's to remove.

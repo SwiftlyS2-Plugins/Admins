@@ -1,6 +1,8 @@
+using Admins.Models;
 using Admins.Services.Access;
 using Admins.Shared;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using SwiftlyS2.Shared;
 using SwiftlyS2.Shared.Events;
 using SwiftlyS2.Shared.GameEventDefinitions;
@@ -21,8 +23,13 @@ namespace Admins.Services.PlayerControl;
 public sealed partial class PlayerControlService : IDisposable
 {
     private const float BeaconIntervalSeconds = 1.5f;
-    private const string BeaconSound = "UIPanorama.popup_accept_match_beep";
-    private const int BeaconSegments = 16;
+    private const float BeaconPulseSeconds = 1f;
+    private const float BeaconStepSeconds = 0.1f;
+    private const float BeaconStartRadius = 20f;
+    private const float BeaconEndRadius = 190f;
+    private const float BeaconHeight = 6f;
+    private const float BeaconWidth = 4f;
+    private const int BeaconSegments = 20;
     private const float DrugIntervalSeconds = 1f;
     private const int ArmorItemDefinitionIndex = 51;
 
@@ -31,20 +38,34 @@ public sealed partial class PlayerControlService : IDisposable
 
     private readonly ISwiftlyCore _core;
     private readonly ILogger<PlayerControlService> _logger;
+    private readonly IOptionsMonitor<Configuration> _config;
     private readonly AccessService _access;
     private readonly Messenger _messenger;
     private readonly TargetResolver _targets;
     private readonly MenuShortcuts _shortcuts;
 
     // Game thread only, keyed by slot.
-    private readonly Dictionary<int, (ulong SessionId, CancellationTokenSource Timer)> _beacons = [];
+    private readonly Dictionary<int, Beacon> _beacons = [];
     private readonly Dictionary<int, (ulong SessionId, CancellationTokenSource Timer)> _drugs = [];
     private readonly Dictionary<int, (ulong SessionId, Vector Position)> _deathPositions = [];
 
-    public PlayerControlService(ISwiftlyCore core, ILogger<PlayerControlService> logger, AccessService access, Messenger messenger, TargetResolver targets, MenuShortcuts shortcuts)
+    /// <summary>A beaconed player and the ring of its current pulse, empty between pulses.</summary>
+    private sealed class Beacon(PlayerRef player)
+    {
+        public PlayerRef Player { get; } = player;
+
+        public CancellationTokenSource? Timer { get; set; }
+
+        public CHandle<CBeam>[] Ring { get; set; } = [];
+
+        public float Age { get; set; } = BeaconIntervalSeconds;
+    }
+
+    public PlayerControlService(ISwiftlyCore core, ILogger<PlayerControlService> logger, IOptionsMonitor<Configuration> config, AccessService access, Messenger messenger, TargetResolver targets, MenuShortcuts shortcuts)
     {
         _core = core;
         _logger = logger;
+        _config = config;
         _access = access;
         _messenger = messenger;
         _targets = targets;
@@ -80,9 +101,17 @@ public sealed partial class PlayerControlService : IDisposable
     [EventListener<EventDelegates.OnMapUnload>]
     public void OnMapUnload(IOnMapUnloadEvent e)
     {
-        foreach (var slot in _beacons.Keys.ToList()) StopBeacon(slot);
+        // The rings go with the map.
+        foreach (var beacon in _beacons.Values) beacon.Timer?.Cancel();
+        _beacons.Clear();
         foreach (var slot in _drugs.Keys.ToList()) StopDrug(slot, clearScreen: false);
         _deathPositions.Clear();
+    }
+
+    [EventListener<EventDelegates.OnPrecacheResource>]
+    public void OnPrecacheResource(IOnPrecacheResourceEvent e)
+    {
+        if (_config.CurrentValue.Beacon.SoundEventsFile is { Length: > 0 } file) e.AddItem(file);
     }
 
     public bool IsFrozen(IPlayer target) => AlivePawnOf(target) is { } pawn && pawn.ActualMoveType == MoveType_t.MOVETYPE_INVALID;
@@ -91,7 +120,7 @@ public sealed partial class PlayerControlService : IDisposable
 
     public bool IsGod(IPlayer target) => AlivePawnOf(target) is { } pawn && !pawn.TakesDamage;
 
-    public bool HasBeacon(IPlayer target) => _beacons.TryGetValue(target.Slot, out var beacon) && beacon.SessionId == target.SessionId;
+    public bool HasBeacon(IPlayer target) => _beacons.TryGetValue(target.Slot, out var beacon) && beacon.Player.SessionId == target.SessionId;
 
     public bool IsDrugged(IPlayer target) => _drugs.TryGetValue(target.Slot, out var drug) && drug.SessionId == target.SessionId;
 
@@ -184,11 +213,10 @@ public sealed partial class PlayerControlService : IDisposable
             if (!HasBeacon(target))
             {
                 StopBeacon(target.Slot);
-                var reference = PlayerRef.Of(target);
-                DrawBeacon(reference);
-                var timer = _core.Scheduler.DelayAndRepeatBySeconds(BeaconIntervalSeconds, BeaconIntervalSeconds, () => DrawBeacon(reference));
-                _core.Scheduler.StopOnMapChange(timer);
-                _beacons[target.Slot] = (target.SessionId, timer);
+                var beacon = new Beacon(PlayerRef.Of(target));
+                beacon.Timer = _core.Scheduler.DelayAndRepeatBySeconds(BeaconStepSeconds, BeaconStepSeconds, () => BeaconStep(beacon));
+                _core.Scheduler.StopOnMapChange(beacon.Timer);
+                _beacons[target.Slot] = beacon;
             }
         }
         else
@@ -533,7 +561,10 @@ public sealed partial class PlayerControlService : IDisposable
 
     private void StopBeacon(int slot)
     {
-        if (_beacons.Remove(slot, out var beacon)) beacon.Timer.Cancel();
+        if (!_beacons.Remove(slot, out var beacon)) return;
+
+        beacon.Timer?.Cancel();
+        ClearRing(beacon);
     }
 
     private void StopDrug(int slot, bool clearScreen)
@@ -575,67 +606,109 @@ public sealed partial class PlayerControlService : IDisposable
         fade.Send();
     }
 
-    private void DrawBeacon(PlayerRef reference)
+    private void BeaconStep(Beacon beacon)
     {
-        if (reference.Resolve(_core) is not { } player)
+        if (beacon.Player.Resolve(_core) is not { } player)
         {
-            StopBeacon(reference.Slot);
+            StopBeacon(beacon.Player.Slot);
             return;
         }
 
-        if (AlivePawnOf(player) is not { } pawn || pawn.AbsOrigin is not { } origin) return;
+        beacon.Age += BeaconStepSeconds;
 
-        var color = player.Controller.TeamNum switch
+        if (AlivePawnOf(player) is not { } pawn || pawn.AbsOrigin is not { } origin)
         {
-            (byte)Team.T => Color.FromBuiltin(System.Drawing.Color.Red),
-            (byte)Team.CT => Color.FromBuiltin(System.Drawing.Color.Blue),
-            _ => Color.FromBuiltin(System.Drawing.Color.White),
-        };
-
-        var center = new Vector(origin.X, origin.Y, origin.Z + 6f);
-        DrawRing(center, 20f, color, 0.95f);
-        DrawRing(center, 34f, color, 0.8f);
-
-        using var sound = new SoundEvent(BeaconSound);
-        sound.SourceEntityIndex = -1;
-        sound.Recipients.AddRecipient(player.PlayerID);
-        sound.Emit();
-    }
-
-    private void DrawRing(Vector center, float radius, Color color, float life)
-    {
-        Vector Point(int i)
-        {
-            var angle = i * (2.0 * Math.PI / BeaconSegments);
-            return new Vector(center.X + (radius * (float)Math.Cos(angle)), center.Y + (radius * (float)Math.Sin(angle)), center.Z);
+            ClearRing(beacon);
+            return;
         }
 
-        var previous = Point(BeaconSegments - 1);
+        if (beacon.Ring.Length > 0 && beacon.Age >= BeaconPulseSeconds) ClearRing(beacon);
+
+        if (beacon.Ring.Length == 0)
+        {
+            if (beacon.Age < BeaconIntervalSeconds) return;
+
+            beacon.Age = 0;
+            beacon.Ring = SpawnRing(origin, TeamColor(player));
+            EmitBeaconSound(pawn);
+            return;
+        }
+
+        var radius = BeaconStartRadius + ((BeaconEndRadius - BeaconStartRadius) * beacon.Age / BeaconPulseSeconds);
         for (var i = 0; i < BeaconSegments; i++)
         {
-            var current = Point(i);
-            DrawBeam(previous, current, color, life);
-            previous = current;
+            if (beacon.Ring[i].Value is { } beam) MoveBeam(beam, RingPoint(origin, radius, i), RingPoint(origin, radius, i + 1));
         }
     }
 
-    private void DrawBeam(Vector start, Vector end, Color color, float life)
+    private static Color TeamColor(IPlayer player) => player.Controller.TeamNum switch
+    {
+        (byte)Team.T => Color.FromBuiltin(System.Drawing.Color.Red),
+        (byte)Team.CT => Color.FromBuiltin(System.Drawing.Color.Blue),
+        _ => Color.FromBuiltin(System.Drawing.Color.White),
+    };
+
+    private static Vector RingPoint(Vector origin, float radius, int i)
+    {
+        var angle = i * (2.0 * Math.PI / BeaconSegments);
+        return new Vector(origin.X + (radius * (float)Math.Cos(angle)), origin.Y + (radius * (float)Math.Sin(angle)), origin.Z + BeaconHeight);
+    }
+
+    private CHandle<CBeam>[] SpawnRing(Vector origin, Color color)
+    {
+        var ring = new CHandle<CBeam>[BeaconSegments];
+        for (var i = 0; i < BeaconSegments; i++)
+        {
+            ring[i] = SpawnBeam(RingPoint(origin, BeaconStartRadius, i), RingPoint(origin, BeaconStartRadius, i + 1), color);
+        }
+
+        return ring;
+    }
+
+    private CHandle<CBeam> SpawnBeam(Vector start, Vector end, Color color)
     {
         var beam = _core.EntitySystem.CreateEntityByDesignerName<CBeam>("beam");
-        if (beam is null) return;
-
         beam.Render = color;
-        beam.Width = 2.0f;
+        beam.Width = BeaconWidth;
+        beam.EndWidth = BeaconWidth;
         beam.Teleport(start, RotationZero, VectorZero);
-        beam.EndPos.X = end.X;
-        beam.EndPos.Y = end.Y;
-        beam.EndPos.Z = end.Z;
+        beam.EndPos = end;
         beam.DispatchSpawn();
 
-        _core.Scheduler.DelayBySeconds(life, () =>
+        // Marked changed again once spawned: every beam that is known to draw gets written after its spawn.
+        beam.RenderUpdated();
+        beam.WidthUpdated();
+        beam.EndWidthUpdated();
+        beam.EndPosUpdated();
+        return _core.EntitySystem.GetRefEHandle(beam);
+    }
+
+    private static void MoveBeam(CBeam beam, Vector start, Vector end)
+    {
+        beam.Teleport(start, RotationZero, VectorZero);
+        beam.EndPos = end;
+        beam.EndPosUpdated();
+    }
+
+    // Through handles: round cleanup removes the beams, and a held wrapper could then reach a reused entity.
+    private static void ClearRing(Beacon beacon)
+    {
+        foreach (var handle in beacon.Ring)
         {
-            if (beam.IsValid) beam.Despawn();
-        });
+            if (handle.Value is { } beam) beam.Despawn();
+        }
+
+        beacon.Ring = [];
+    }
+
+    private void EmitBeaconSound(CCSPlayerPawn pawn)
+    {
+        if (_config.CurrentValue.Beacon.Sound is not { Length: > 0 } name) return;
+
+        using var sound = new SoundEvent(name);
+        sound.SetSourceEntity(pawn);
+        sound.Recipients.AddAllPlayers();
+        sound.Emit();
     }
 
     #endregion
