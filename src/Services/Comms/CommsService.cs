@@ -1,0 +1,772 @@
+using System.Linq.Expressions;
+using Admins.Contract;
+using Admins.Database;
+using Admins.Database.Models;
+using Admins.Models;
+using Admins.Services.Access;
+using Admins.Services.Presence;
+using Admins.Services.Server;
+using Admins.Services.Sessions;
+using Admins.Shared;
+using Dommel;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
+using SwiftlyS2.Shared;
+using SwiftlyS2.Shared.Commands;
+using SwiftlyS2.Shared.Events;
+using SwiftlyS2.Shared.Misc;
+using SwiftlyS2.Shared.Players;
+
+namespace Admins.Services.Comms;
+
+public enum CommsAction
+{
+    Gag,
+    Mute,
+    Silence,
+}
+
+/// <summary>Which of the punishments that apply here a lift reaches.</summary>
+public enum LiftScope
+{
+    /// <summary>This server's own.</summary>
+    Local,
+
+    /// <summary>The global ones.</summary>
+    Global,
+
+    /// <summary>Both.</summary>
+    Any,
+}
+
+public sealed partial class CommsService : ICommsManager, IDisposable
+{
+    private readonly ISwiftlyCore _core;
+    private readonly ILogger<CommsService> _logger;
+    private readonly AdminsDatabase _database;
+    private readonly ServerService _server;
+    private readonly AccessService _access;
+    private readonly Messenger _messenger;
+    private readonly TargetResolver _targets;
+    private readonly MenuShortcuts _shortcuts;
+    private readonly PresenceService _presence;
+    private readonly IDisposable? _configSubscription;
+    private readonly CancellationTokenSource _voiceTimer;
+    private volatile CommsConfiguration _config;
+    private CancellationTokenSource? _syncTimer;
+    private int _syncing;
+    private long _upkeepDueAt;
+    private bool _disposed;
+
+    // Game thread only. Keyed by slot because the SteamID already reads 0 when the disconnect event fires.
+    private readonly Dictionary<int, CacheEntry> _cache = [];
+    private readonly Dictionary<int, int> _versions = [];
+    private readonly Dictionary<int, VoiceFlagValue> _savedVoice = [];
+
+    public CommsService(
+        ISwiftlyCore core,
+        ILogger<CommsService> logger,
+        IOptionsMonitor<Configuration> config,
+        AdminsDatabase database,
+        ServerService server,
+        AccessService access,
+        Messenger messenger,
+        TargetResolver targets,
+        MenuShortcuts shortcuts,
+        PresenceService presence)
+    {
+        _core = core;
+        _logger = logger;
+        _database = database;
+        _server = server;
+        _access = access;
+        _messenger = messenger;
+        _targets = targets;
+        _shortcuts = shortcuts;
+        _presence = presence;
+        _config = config.CurrentValue.Comms;
+
+        _configSubscription = config.OnChange(c =>
+        {
+            var restart = c.Comms.DatabaseSyncIntervalSeconds != _config.DatabaseSyncIntervalSeconds;
+            _config = c.Comms;
+            if (restart) _core.Scheduler.NextTick(RestartSyncTimer);
+        });
+
+        core.Registrator.Register(this);
+        _voiceTimer = core.Scheduler.DelayAndRepeatGuarded(1f, 1f, logger, EnforceVoice);
+        presence.Changed += OnPresenceChanged;
+        RestartSyncTimer();
+
+        // Covers a hot reload; on a cold start nobody is connected yet.
+        core.Scheduler.NextTick(LoadOnline);
+    }
+
+    public CommsConfiguration Config => _config;
+
+    public event Action<ISanction>? OnAdminSanctionAdded;
+
+    public event Action<ISanction>? OnAdminSanctionUpdated;
+
+    public event Action<ISanction>? OnAdminSanctionRemoved;
+
+    private sealed record CacheEntry(ulong SessionId, List<Sanction> Sanctions);
+
+    public static IReadOnlyList<SanctionKind> KindsOf(CommsAction action) => action switch
+    {
+        CommsAction.Gag => [SanctionKind.Gag],
+        CommsAction.Mute => [SanctionKind.Mute],
+        _ => [SanctionKind.Gag, SanctionKind.Mute],
+    };
+
+    #region Cache and enforcement
+
+    /// <summary>
+    /// The longest-running active sanction of a kind for an online player. Game thread.
+    /// </summary>
+    public Sanction? GetActive(IPlayer player, SanctionKind kind)
+    {
+        if (!_cache.TryGetValue(player.Slot, out var entry) || entry.SessionId != player.SessionId) return null;
+
+        var now = AdminsDatabase.NowMs;
+        return entry.Sanctions
+            .Where(s => s.SanctionKind == kind && s.IsActive(now))
+            .OrderByDescending(s => s.ExpiresAt == 0 ? long.MaxValue : s.ExpiresAt)
+            .FirstOrDefault();
+    }
+
+    public ISanction? GetActiveSanction(IPlayer player, SanctionKind kind) => GetActive(player, kind);
+
+    /// <summary>
+    /// Whether an online player has an active sanction of a kind, of this server or a global one. Game thread.
+    /// </summary>
+    public bool HasActive(IPlayer player, SanctionKind kind, bool global)
+    {
+        if (!_cache.TryGetValue(player.Slot, out var entry) || entry.SessionId != player.SessionId) return false;
+
+        var now = AdminsDatabase.NowMs;
+        return entry.Sanctions.Any(s => s.SanctionKind == kind && s.GlobalSanction == global && s.IsActive(now));
+    }
+
+    [EventListener<EventDelegates.OnClientSteamAuthorize>]
+    public void OnClientSteamAuthorize(IOnClientSteamAuthorizeEvent e)
+    {
+        var playerId = e.PlayerId;
+        _core.Scheduler.NextTick(() =>
+        {
+            if (_core.PlayerManager.GetPlayer(playerId) is { IsFakeClient: false } player) Load([PlayerRef.Of(player)]);
+        });
+    }
+
+    [EventListener<EventDelegates.OnClientDisconnected>]
+    public void OnClientDisconnected(IOnClientDisconnectedEvent e)
+    {
+        _cache.Remove(e.PlayerId);
+        _savedVoice.Remove(e.PlayerId);
+        Bump(e.PlayerId);
+    }
+
+    private void RestartSyncTimer()
+    {
+        _syncTimer?.Cancel();
+        _syncTimer = null;
+
+        var interval = _config.DatabaseSyncIntervalSeconds;
+        if (interval > 0)
+        {
+            _syncTimer = _core.Scheduler.DelayAndRepeatGuarded(interval, interval, _logger, Sync);
+        }
+    }
+
+    // None while the last reload is still running, so a slow database cannot pile them up.
+    private void Sync()
+    {
+        if (!_database.Enabled) return;
+
+        var players = OnlinePlayers();
+        if (Interlocked.Exchange(ref _syncing, 1) == 1) return;
+
+        if (AdminsDatabase.UpkeepDue(ref _upkeepDueAt)) MarkExpired();
+        _ = Load(players).ContinueWith(_ => Volatile.Write(ref _syncing, 0), TaskScheduler.Default);
+    }
+
+    private void MarkExpired()
+    {
+        if (!_database.Enabled) return;
+
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                using var db = _database.Connect();
+                await AdminsDatabase.MarkExpiredAsync<Sanction>(db, AdminsDatabase.NowMs).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to mark ended sanctions Expired.");
+            }
+        });
+    }
+
+    private void LoadOnline() => Load(OnlinePlayers());
+
+    private List<PlayerRef> OnlinePlayers() => [.. _messenger.Humans().Where(p => p.IsAuthorized).Select(PlayerRef.Of)];
+
+    // A sanction issued or lifted while the query runs bumps the slot's version, and the stale result is
+    // re-queried instead of overwriting the fresher cache entry.
+    private Task Load(IReadOnlyList<PlayerRef> players)
+    {
+        if (!_database.Enabled || players.Count == 0) return Task.CompletedTask;
+
+        var versions = players.ToDictionary(p => p.Slot, p => _versions.GetValueOrDefault(p.Slot));
+
+        return Task.Run(async () =>
+        {
+            try
+            {
+                var active = await FindActiveForAsync(players).ConfigureAwait(false);
+
+                _core.Scheduler.NextTick(() =>
+                {
+                    var stale = new List<PlayerRef>();
+                    var now = AdminsDatabase.NowMs;
+
+                    foreach (var player in players)
+                    {
+                        if (!_core.PlayerManager.IsSessionIdValid(player.SessionId)) continue;
+
+                        if (_versions.GetValueOrDefault(player.Slot) != versions[player.Slot])
+                        {
+                            stale.Add(player);
+                            continue;
+                        }
+
+                        Refresh(player, [.. active.Where(s => Matches(s, player.SteamId, player.Ip))], now);
+                    }
+
+                    if (stale.Count > 0) Load(stale);
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to load sanctions for {Count} player(s).", players.Count);
+            }
+        });
+    }
+
+    // Keeps what could not be stored (Id 0): it lasts until the player reconnects. A gag new to the cache was issued
+    // elsewhere while they played, and they are told as they would be for one given here.
+    private void Refresh(PlayerRef player, List<Sanction> loaded, long now)
+    {
+        if (_cache.TryGetValue(player.Slot, out var cached) && cached.SessionId == player.SessionId)
+        {
+            loaded.AddRange(cached.Sanctions.Where(s => s.Id == 0 && s.IsActive(now)));
+
+            if (loaded.FirstOrDefault(s => s.SanctionKind == SanctionKind.Gag && s.Id != 0 && !cached.Sanctions.Any(c => c.Id == s.Id)) is { } gag
+                && player.Resolve(_core) is { } online)
+            {
+                _messenger.Chat(online, "gag.message", gag.AdminName, _messenger.Timestamp(online, gag.ExpiresAt), gag.Reason);
+            }
+        }
+
+        _cache[player.Slot] = new CacheEntry(player.SessionId, loaded);
+    }
+
+    private async Task<IReadOnlyList<Sanction>> FindActiveForAsync(IReadOnlyList<PlayerRef> players)
+    {
+        var steamIds = players.Select(p => (long)p.SteamId).Where(id => id != 0).Distinct().ToList();
+        var ips = players.Select(p => p.Ip).Where(ip => ip.Length > 0).Distinct().ToList();
+        var now = AdminsDatabase.NowMs;
+        var guid = _server.Guid;
+
+        using var db = _database.Connect();
+        var rows = await db.SelectAsync<Sanction>(s =>
+            ((s.SanctionType == SanctionType.SteamID && steamIds.Contains(s.SteamId64)) || (s.SanctionType == SanctionType.IP && ips.Contains(s.PlayerIp)))
+            && (s.ExpiresAt == 0 || s.ExpiresAt > now)
+            && (s.Server == guid || s.GlobalSanction == true)).ConfigureAwait(false);
+
+        return [.. rows];
+    }
+
+    private static bool Matches(Sanction sanction, ulong steamId, string ip) =>
+        sanction.SanctionType == SanctionType.SteamID
+            ? steamId != 0 && (ulong)sanction.SteamId64 == steamId
+            : ip.Length > 0 && Net.NormalizeIp(sanction.PlayerIp) == ip;
+
+    private void Bump(int slot) => _versions[slot] = _versions.GetValueOrDefault(slot) + 1;
+
+    private void OnPresenceChanged() => _core.Scheduler.NextTick(EnforceVoice);
+
+    // A hidden admin is muted too, so an open mic cannot give them away.
+    private void EnforceVoice()
+    {
+        foreach (var player in _messenger.Humans().ToList())
+        {
+            var slot = player.Slot;
+            var mute = GetActive(player, SanctionKind.Mute);
+
+            if (mute is not null || _presence.IsHidden(player))
+            {
+                var flags = player.VoiceFlags;
+                if (flags == VoiceFlagValue.Muted) continue;
+
+                _savedVoice.TryAdd(slot, flags);
+                player.VoiceFlags = VoiceFlagValue.Muted;
+                if (mute is not null) _messenger.Chat(player, "mute.message", mute.AdminName, _messenger.Timestamp(player, mute.ExpiresAt), mute.Reason);
+            }
+            else if (_savedVoice.Remove(slot, out var original))
+            {
+                player.VoiceFlags = original;
+            }
+        }
+    }
+
+    [ClientChatHookHandler]
+    public HookResult OnClientChat(int playerId, string text, bool teamonly)
+    {
+        var player = _core.PlayerManager.GetPlayer(playerId);
+        if (player is null || player.IsFakeClient) return HookResult.Continue;
+
+        var config = _config;
+        var marker = config.AdminChatStartCharacter;
+
+        // Checked before the gag on purpose: a gagged player can still reach the admins.
+        if (teamonly && config.EnableAdminChat && !string.IsNullOrEmpty(marker) && text.StartsWith(marker, StringComparison.Ordinal))
+        {
+            SendAdminChat(player, text[marker.Length..].Trim());
+            return HookResult.Stop;
+        }
+
+        // Commands already ran before this hook; only the chat line itself would give a hidden admin away.
+        if (_presence.IsHidden(player))
+        {
+            if (text.Length > 0 && text[0] is not ('!' or '/')) _messenger.Chat(player, "hide.chat_blocked");
+            return HookResult.Stop;
+        }
+
+        if (GetActive(player, SanctionKind.Gag) is { } gag)
+        {
+            _messenger.Chat(player, "gag.message", gag.AdminName, _messenger.Timestamp(player, gag.ExpiresAt), gag.Reason);
+            return HookResult.Stop;
+        }
+
+        return HookResult.Continue;
+    }
+
+    private void SendAdminChat(IPlayer sender, string message)
+    {
+        if (message.Length == 0) return;
+
+        var name = Names.Of(sender);
+        var key = _core.Permission.PlayerHasPermission(sender.SteamID, "admins.chat") ? "admins.admin_chat_format" : "admins.player_chat_format";
+
+        foreach (var player in _messenger.Humans())
+        {
+            if (player.Slot == sender.Slot || _core.Permission.PlayerHasPermission(player.SteamID, "admins.chat"))
+            {
+                player.SendChat(_messenger.Text(player, key, name, message));
+            }
+        }
+    }
+
+    #endregion
+
+    #region Issuing and lifting
+
+    /// <summary>
+    /// Sanctions an online player. Game thread; the caller has already checked permission and immunity.
+    /// </summary>
+    public void SanctionPlayer(Issuer issuer, IPlayer target, CommsAction action, SanctionType type, TimeSpan duration, string reason, bool global)
+    {
+        var player = PlayerRef.Of(target);
+
+        if (type == SanctionType.IP && player.Ip.Length == 0)
+        {
+            _messenger.Reply(issuer, "comms.no_ip", player.Name);
+            return;
+        }
+
+        Store(issuer, Create(issuer, (long)player.SteamId, player.Name, player.Ip, action, type, duration, reason, global), action, player.Name);
+    }
+
+    /// <summary>
+    /// Sanctions a SteamID64 or an IP address as given, applying it to whoever on the server it matches. Game thread; the
+    /// caller has already checked immunity.
+    /// </summary>
+    /// <param name="name">The player's last known name. Without one, a SteamID sanction takes the name of their latest session.</param>
+    public void SanctionOffline(Issuer issuer, ulong steamId64, string? ip, CommsAction action, SanctionType type, TimeSpan duration, string reason, bool global, string? name = null)
+    {
+        var address = Net.NormalizeIp(ip);
+        var id = type == SanctionType.IP ? address : steamId64.ToString();
+        var known = !string.IsNullOrWhiteSpace(name);
+        var sanctions = Create(issuer, (long)steamId64, known ? name! : "Unknown", address, action, type, duration, reason, global);
+
+        Store(issuer, sanctions, action, known ? $"{name} ({id})" : id, lookupName: !known && type == SanctionType.SteamID && steamId64 != 0);
+    }
+
+    private List<Sanction> Create(Issuer issuer, long steamId64, string name, string ip, CommsAction action, SanctionType type, TimeSpan duration, string reason, bool global)
+    {
+        var now = AdminsDatabase.NowMs;
+
+        return
+        [
+            .. KindsOf(action).Select(kind => new Sanction
+            {
+                SteamId64 = steamId64,
+                PlayerName = name,
+                PlayerIp = ip,
+                SanctionType = type,
+                SanctionKind = kind,
+                ExpiresAt = Durations.ExpiresAt(duration, now),
+                Length = (long)duration.TotalMilliseconds,
+                Reason = reason,
+                AdminSteamId64 = (long)issuer.SteamId,
+                AdminName = issuer.Name,
+                Server = _server.Guid,
+                GlobalSanction = global,
+                CreatedAt = now,
+                UpdatedAt = now,
+            }),
+        ];
+    }
+
+    // Applies in memory even when storing fails, so the player is silenced for the rest of the session.
+    private void Store(Issuer issuer, List<Sanction> sanctions, CommsAction action, string display, bool lookupName = false)
+    {
+        _ = Task.Run(async () =>
+        {
+            var stored = false;
+
+            if (_database.Enabled)
+            {
+                try
+                {
+                    using var db = _database.Connect();
+
+                    if (lookupName && await SessionsService.LastNameAsync(db, (ulong)sanctions[0].SteamId64).ConfigureAwait(false) is { } name)
+                    {
+                        foreach (var sanction in sanctions) sanction.PlayerName = name;
+                        display = $"{name} ({display})";
+                    }
+
+                    foreach (var sanction in sanctions)
+                    {
+                        sanction.Id = Convert.ToInt64(await db.InsertAsync(sanction).ConfigureAwait(false));
+                    }
+
+                    stored = true;
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Failed to store a sanction for {Target}.", display);
+                    _messenger.ReplyLater(issuer, "comms.not_saved", display);
+                }
+            }
+
+            _core.Scheduler.NextTick(() =>
+            {
+                Apply(sanctions);
+                if (stored) foreach (var sanction in sanctions) Raise(OnAdminSanctionAdded, sanction);
+
+                if (_messenger.IsConnected(issuer))
+                {
+                    var first = sanctions[0];
+                    _messenger.Reply(issuer, "comms.applied", issuer.Name, ActionLabel(issuer.Player, action, first.GlobalSanction), display, _messenger.Duration(issuer.Player, first.Length), first.Reason);
+                }
+            });
+        });
+    }
+
+    private void Apply(IReadOnlyList<Sanction> sanctions)
+    {
+        var now = AdminsDatabase.NowMs;
+
+        foreach (var player in _messenger.Humans().ToList())
+        {
+            var reference = PlayerRef.Of(player);
+            var matched = sanctions.Where(s => s.IsActive(now) && Matches(s, reference.SteamId, reference.Ip)).ToList();
+            if (matched.Count == 0) continue;
+
+            Bump(reference.Slot);
+
+            if (!_cache.TryGetValue(reference.Slot, out var entry) || entry.SessionId != reference.SessionId)
+            {
+                entry = new CacheEntry(reference.SessionId, []);
+                _cache[reference.Slot] = entry;
+            }
+
+            entry.Sanctions.AddRange(matched);
+
+            if (matched.FirstOrDefault(s => s.SanctionKind == SanctionKind.Gag) is { } gag)
+            {
+                _messenger.Chat(player, "gag.message", gag.AdminName, _messenger.Timestamp(player, gag.ExpiresAt), gag.Reason);
+            }
+        }
+
+        EnforceVoice();
+    }
+
+    /// <summary>
+    /// Marks the given sanctions lifted, ends them now, drops them from the cache and raises
+    /// <see cref="OnAdminSanctionRemoved"/>.
+    /// </summary>
+    public async Task<int> LiftAsync(IReadOnlyList<Sanction> sanctions)
+    {
+        if (sanctions.Count == 0) return 0;
+
+        if (_database.Enabled)
+        {
+            var now = AdminsDatabase.NowMs;
+            using var db = _database.Connect();
+            foreach (var sanction in sanctions.Where(s => s.Id != 0))
+            {
+                sanction.ExpiresAt = now;
+                sanction.UpdatedAt = now;
+                sanction.StoredStatus = PunishmentStatus.Lifted;
+                await db.UpdateAsync(sanction).ConfigureAwait(false);
+            }
+        }
+
+        await _core.Scheduler.NextTickAsync(() => Forget(sanctions)).ConfigureAwait(false);
+        return sanctions.Count;
+    }
+
+    private void Forget(IReadOnlyList<Sanction> sanctions)
+    {
+        // LiftAsync gets here through NextTickAsync, which SwiftlyS2 still runs after an unload.
+        if (_disposed) return;
+
+        var ids = sanctions.Where(s => s.Id != 0).Select(s => s.Id).ToHashSet();
+
+        foreach (var (slot, entry) in _cache)
+        {
+            if (entry.Sanctions.RemoveAll(s => sanctions.Contains(s) || (s.Id != 0 && ids.Contains(s.Id))) > 0) Bump(slot);
+        }
+
+        foreach (var sanction in sanctions) Raise(OnAdminSanctionRemoved, sanction);
+
+        EnforceVoice();
+    }
+
+    /// <summary>
+    /// Sanctions that apply to this server, newest first, optionally of one kind.
+    /// </summary>
+    public async Task<IReadOnlyList<Sanction>> ListAsync(RecordStatus status, SanctionKind? kind, int limit)
+    {
+        if (!_database.Enabled) return [];
+
+        using var db = _database.Connect();
+        var rows = await db.FromAsync<Sanction>(q => q.Select().Where(Here(status, kind)).OrderByDescending(s => s.Id).Page(1, limit)).ConfigureAwait(false);
+        return [.. rows];
+    }
+
+    /// <summary>
+    /// How many sanctions that apply to this server are active, how many ran out and how many were lifted.
+    /// </summary>
+    public async Task<AdminRecordCounts> CountSanctionsAsync(SanctionKind? sanctionKind = null)
+    {
+        if (!_database.Enabled) return default;
+
+        using var db = _database.Connect();
+        var active = await db.CountAsync(Here(RecordStatus.Active, sanctionKind)).ConfigureAwait(false);
+        var expired = await db.CountAsync(Here(RecordStatus.Expired, sanctionKind)).ConfigureAwait(false);
+        var lifted = await db.CountAsync(Here(RecordStatus.Lifted, sanctionKind)).ConfigureAwait(false);
+        return new AdminRecordCounts((int)active, (int)expired) { Lifted = (int)lifted };
+    }
+
+    public bool AppliesHere(Sanction sanction) => sanction.GlobalSanction || sanction.Server == _server.Guid;
+
+    // Spelled out per case: a nullable kind folded into one predicate is not something Dommel can translate.
+    private Expression<Func<Sanction, bool>> Here(RecordStatus status, SanctionKind? kind)
+    {
+        var now = AdminsDatabase.NowMs;
+        var guid = _server.Guid;
+
+        if (kind is not { } k)
+        {
+            return status switch
+            {
+                RecordStatus.Active => s => (s.ExpiresAt == 0 || s.ExpiresAt > now) && (s.Server == guid || s.GlobalSanction == true),
+                RecordStatus.Expired => s => s.ExpiresAt != 0 && s.ExpiresAt <= now && s.StoredStatus != PunishmentStatus.Lifted && (s.Server == guid || s.GlobalSanction == true),
+                RecordStatus.Lifted => s => s.ExpiresAt != 0 && s.ExpiresAt <= now && s.StoredStatus == PunishmentStatus.Lifted && (s.Server == guid || s.GlobalSanction == true),
+                _ => s => s.Server == guid || s.GlobalSanction == true,
+            };
+        }
+
+        return status switch
+        {
+            RecordStatus.Active => s => s.SanctionKind == k && (s.ExpiresAt == 0 || s.ExpiresAt > now) && (s.Server == guid || s.GlobalSanction == true),
+            RecordStatus.Expired => s => s.SanctionKind == k && s.ExpiresAt != 0 && s.ExpiresAt <= now && s.StoredStatus != PunishmentStatus.Lifted && (s.Server == guid || s.GlobalSanction == true),
+            RecordStatus.Lifted => s => s.SanctionKind == k && s.ExpiresAt != 0 && s.ExpiresAt <= now && s.StoredStatus == PunishmentStatus.Lifted && (s.Server == guid || s.GlobalSanction == true),
+            _ => s => s.SanctionKind == k && (s.Server == guid || s.GlobalSanction == true),
+        };
+    }
+
+    /// <param name="anyTypeOnIp">An address matches every sanction recorded with it, not only those given by IP.</param>
+    private async Task<IReadOnlyList<Sanction>> FindApplicableActiveAsync(IReadOnlyList<(ulong SteamId, string Ip)> subjects, IReadOnlyList<SanctionKind> kinds, bool anyTypeOnIp = false)
+    {
+        var steamIds = subjects.Select(s => (long)s.SteamId).Where(id => id != 0).Distinct().ToList();
+        var ips = subjects.Select(s => s.Ip).Where(ip => ip.Length > 0).Distinct().ToList();
+        if (steamIds.Count == 0 && ips.Count == 0) return [];
+
+        var kindList = kinds.ToList();
+        var now = AdminsDatabase.NowMs;
+        var guid = _server.Guid;
+
+        // One query per case, so no IN list is ever empty.
+        using var db = _database.Connect();
+        var rows = ips.Count == 0
+            ? await db.SelectAsync<Sanction>(s =>
+                steamIds.Contains(s.SteamId64)
+                && kindList.Contains(s.SanctionKind)
+                && (s.ExpiresAt == 0 || s.ExpiresAt > now)
+                && (s.Server == guid || s.GlobalSanction == true)).ConfigureAwait(false)
+            : steamIds.Count == 0 && anyTypeOnIp
+                ? await db.SelectAsync<Sanction>(s =>
+                    ips.Contains(s.PlayerIp)
+                    && kindList.Contains(s.SanctionKind)
+                    && (s.ExpiresAt == 0 || s.ExpiresAt > now)
+                    && (s.Server == guid || s.GlobalSanction == true)).ConfigureAwait(false)
+            : steamIds.Count == 0
+                ? await db.SelectAsync<Sanction>(s =>
+                    s.SanctionType == SanctionType.IP && ips.Contains(s.PlayerIp)
+                    && kindList.Contains(s.SanctionKind)
+                    && (s.ExpiresAt == 0 || s.ExpiresAt > now)
+                    && (s.Server == guid || s.GlobalSanction == true)).ConfigureAwait(false)
+                : await db.SelectAsync<Sanction>(s =>
+                    (steamIds.Contains(s.SteamId64) || (s.SanctionType == SanctionType.IP && ips.Contains(s.PlayerIp)))
+                    && kindList.Contains(s.SanctionKind)
+                    && (s.ExpiresAt == 0 || s.ExpiresAt > now)
+                    && (s.Server == guid || s.GlobalSanction == true)).ConfigureAwait(false);
+
+        return [.. rows];
+    }
+
+    public string ActionLabel(IPlayer? viewer, CommsAction action, bool global) => _messenger.Text(viewer, (global, action) switch
+    {
+        (true, CommsAction.Gag) => "global_gag",
+        (true, CommsAction.Mute) => "global_mute",
+        (true, _) => "global_silence",
+        (false, CommsAction.Gag) => "gag",
+        (false, CommsAction.Mute) => "mute",
+        _ => "silence",
+    });
+
+    #endregion
+
+    #region ICommsManager
+
+    public async Task<IReadOnlyList<ISanction>> FindSanctionsAsync(long? steamId64 = null, string? playerIp = null, SanctionKind? sanctionKind = null, SanctionType? sanctionType = null, RecordStatus status = RecordStatus.All)
+    {
+        if (!_database.Enabled) return [];
+
+        var address = Net.NormalizeIp(playerIp);
+        var now = AdminsDatabase.NowMs;
+
+        using var db = _database.Connect();
+        IEnumerable<Sanction> rows = (steamId64, address.Length > 0) switch
+        {
+            ({ } id, true) => await db.SelectAsync<Sanction>(s => s.SteamId64 == id || s.PlayerIp == address).ConfigureAwait(false),
+            ({ } id, false) => await db.SelectAsync<Sanction>(s => s.SteamId64 == id).ConfigureAwait(false),
+            (null, true) => await db.SelectAsync<Sanction>(s => s.PlayerIp == address).ConfigureAwait(false),
+            _ => await db.GetAllAsync<Sanction>().ConfigureAwait(false),
+        };
+
+        return
+        [
+            .. rows.Where(s =>
+                (sanctionKind is null || s.SanctionKind == sanctionKind)
+                && (sanctionType is null || s.SanctionType == sanctionType)
+                && AdminsDatabase.StatusIs(s.StatusAt(now), status)),
+        ];
+    }
+
+    public async Task<ISanction> AddSanctionAsync(ISanction sanction)
+    {
+        var row = Sanction.From(sanction);
+        var now = AdminsDatabase.NowMs;
+        row.Id = 0;
+        if (row.CreatedAt == 0) row.CreatedAt = now;
+        row.UpdatedAt = now;
+        row.PlayerIp = Net.NormalizeIp(row.PlayerIp);
+        if (string.IsNullOrEmpty(row.Server)) row.Server = _server.Guid;
+
+        if (_database.Enabled)
+        {
+            using var db = _database.Connect();
+            row.Id = Convert.ToInt64(await db.InsertAsync(row).ConfigureAwait(false));
+        }
+
+        _core.Scheduler.NextTick(() =>
+        {
+            Apply([row]);
+            Raise(OnAdminSanctionAdded, row);
+        });
+
+        return row;
+    }
+
+    public async Task UpdateSanctionAsync(ISanction sanction)
+    {
+        if (!_database.Enabled) return;
+
+        var row = Sanction.From(sanction);
+        row.UpdatedAt = AdminsDatabase.NowMs;
+
+        using (var db = _database.Connect())
+        {
+            await db.UpdateAsync(row).ConfigureAwait(false);
+        }
+
+        _core.Scheduler.NextTick(() =>
+        {
+            LoadOnline();
+            Raise(OnAdminSanctionUpdated, row);
+        });
+    }
+
+    public async Task RemoveSanctionAsync(ISanction sanction)
+    {
+        if (!_database.Enabled) return;
+
+        Sanction? row;
+        var id = sanction.Id;
+        using (var db = _database.Connect())
+        {
+            row = await db.GetAsync<Sanction>(id).ConfigureAwait(false);
+        }
+
+        if (row is not null && row.IsActive(AdminsDatabase.NowMs)) await LiftAsync([row]).ConfigureAwait(false);
+    }
+
+    #endregion
+
+    private void Raise(Action<ISanction>? handler, ISanction sanction)
+    {
+        try
+        {
+            handler?.Invoke(sanction);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "A sanction event handler threw.");
+        }
+    }
+
+    // Unloading must not leave anyone muted by a plugin that is no longer there to unmute them.
+    public void Dispose()
+    {
+        _disposed = true;
+        _voiceTimer.Cancel();
+        _syncTimer?.Cancel();
+        _configSubscription?.Dispose();
+        _presence.Changed -= OnPresenceChanged;
+
+        foreach (var (slot, flags) in _savedVoice)
+        {
+            if (_core.PlayerManager.GetPlayer(slot) is { } player) player.VoiceFlags = flags;
+        }
+
+        _savedVoice.Clear();
+    }
+}

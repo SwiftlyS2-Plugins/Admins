@@ -1,0 +1,82 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
+    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
+    <AssemblyName>Admins</AssemblyName>
+    <RootNamespace>Admins</RootNamespace>
+    <OutputPath>$(MSBuildThisFileDirectory)build/</OutputPath>
+    <PublishDir>$(OutputPath)publish/Admins</PublishDir>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Remove="Admins.Contract/**" />
+    <None Remove="Admins.Contract/**" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Floating: SwiftlyS2.CS2 (*-*) raises its own Dapper floor, and a pinned lower version is a restore error. -->
+    <PackageReference Include="Dapper" Version="2.*" />
+    <PackageReference Include="Dommel" Version="3.4.0" />
+    <PackageReference Include="TimeSpanParserUtil" Version="1.2.0" />
+
+    <!-- Runner.Core instead of the FluentMigrator.Runner meta-package, which drags in runners for
+         SqlServer, Oracle, Db2, Firebird, Hana, Redshift and Snowflake plus Microsoft.Data.SqlClient. -->
+    <PackageReference Include="FluentMigrator" Version="8.*" />
+    <PackageReference Include="FluentMigrator.Runner.Core" Version="8.*" />
+    <PackageReference Include="FluentMigrator.Runner.MySql" Version="8.*" />
+    <PackageReference Include="FluentMigrator.Runner.Postgres" Version="8.*" />
+    <PackageReference Include="FluentMigrator.Runner.SQLite" Version="8.*" />
+
+    <!-- FluentMigrator opens its own connection and resolves the ADO driver by assembly name from this
+         plugin's folder; SwiftlyS2's copies are not visible to it. -->
+    <PackageReference Include="MySqlConnector" Version="2.*" />
+    <PackageReference Include="Npgsql" Version="10.*" />
+    <PackageReference Include="System.Data.SQLite.Core" Version="1.*" />
+
+    <!-- No direct Microsoft.Extensions.* references: SwiftlyS2.CS2 brings them at the version SwiftlyS2
+         itself builds against, and pinning them here fails restore (NU1605) whenever the SDK raises them. -->
+    <PackageReference Include="SwiftlyS2.CS2" Version="*-*" ExcludeAssets="runtime" PrivateAssets="all" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Private=false: the only runtime copy must be resources/exports/Admins.Contract.dll. A second copy
+         next to Admins.dll gives the contract types two identities and consumers stop matching. -->
+    <ProjectReference Include="Admins.Contract/Admins.Contract.csproj" Private="false" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Content Include="resources/gamedata/**/*;resources/templates/**/*;resources/translations/**/*">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
+  </ItemGroup>
+
+  <!-- Copied from a target, not an item glob: the contract DLL does not exist yet when this project is
+       evaluated on a clean checkout, so a glob would silently ship nothing. -->
+  <Target Name="CopyContract" AfterTargets="Build">
+    <PropertyGroup>
+      <_ContractDll>$(MSBuildThisFileDirectory)Admins.Contract/build/$(TargetFramework)/Admins.Contract.dll</_ContractDll>
+    </PropertyGroup>
+    <Error Condition="!Exists('$(_ContractDll)')" Text="CopyContract: $(_ContractDll) is missing." />
+    <Copy SourceFiles="$(_ContractDll)" DestinationFolder="$(OutDir)resources/exports" SkipUnchangedFiles="true" />
+  </Target>
+
+  <Target Name="CopyContractToPublish" AfterTargets="Publish">
+    <PropertyGroup>
+      <_ContractDll>$(MSBuildThisFileDirectory)Admins.Contract/build/$(TargetFramework)/Admins.Contract.dll</_ContractDll>
+    </PropertyGroup>
+    <Error Condition="!Exists('$(_ContractDll)')" Text="CopyContractToPublish: $(_ContractDll) is missing." />
+    <Copy SourceFiles="$(_ContractDll)" DestinationFolder="$(PublishDir)resources/exports" SkipUnchangedFiles="true" />
+  </Target>
+
+  <Target Name="CreateZip" AfterTargets="Publish">
+    <ZipDirectory SourceDirectory="$(PublishDir)../" DestinationFile="$(OutputPath)../$(AssemblyName).zip" Overwrite="true" />
+  </Target>
+
+</Project>
