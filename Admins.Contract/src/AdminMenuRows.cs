@@ -107,6 +107,8 @@ public enum AdminPlayerGroup
 {
     Punish,
     Control,
+
+    /// <summary>No longer shown: its actions are under <see cref="Control"/>.</summary>
     Move,
     History,
     Sessions,

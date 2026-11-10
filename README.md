@@ -132,8 +132,7 @@ Admin Menu                  !admin
 ├─ Players (n)              Show: All, CT, T or Spectators
 │  └─ <player>              !admin <player>
 │     ├─ Punish             kick, ban, gag, mute, silence, slay, ungag, unmute
-│     ├─ Control            freeze, slap, respawn, team, beacon, drug, god mode, noclip
-│     ├─ Move and edit      go to, bring, rename, health, money
+│     ├─ Control            freeze, slap, respawn, team, beacon, drug, god mode, noclip, go to, bring, rename, health, money
 │     ├─ History (n)        their bans, gags and mutes on every server
 │     └─ Sessions           their time played, IP addresses and connections on every server
 ├─ Bans                     Show: All, Active, Expired or Unbanned

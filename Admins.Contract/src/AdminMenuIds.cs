@@ -15,6 +15,8 @@ public static class AdminMenuIds
     public const string Player = "admins.players.player";
     public const string PlayerPunish = "admins.players.player.punish";
     public const string PlayerControl = "admins.players.player.control";
+
+    /// <summary>No longer shown: its actions are on <see cref="PlayerControl"/>.</summary>
     public const string PlayerMove = "admins.players.player.move";
     public const string PlayerHistory = "admins.players.player.history";
     public const string PlayerSessions = "admins.players.player.sessions";

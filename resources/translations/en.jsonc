@@ -248,8 +248,6 @@
     "menu.player.punish_title": "Punish {0}",
     "menu.player.control": "Control",
     "menu.player.control_title": "Control: {0}",
-    "menu.player.move": "Move and edit",
-    "menu.player.move_title": "Move and edit: {0}",
     "menu.player.history": "History ({0})",
     "menu.player.history_plain": "History",
     "menu.player.history_title": "History: {0}",

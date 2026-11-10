@@ -217,7 +217,6 @@ public sealed partial class AdminMenuService
         {
             (AdminPlayerGroup.Punish, AdminMenuIds.PlayerPunish, "menu.player.punish", "menu.player.punish_title", PunishActs(viewer, target, afterRemoval)),
             (AdminPlayerGroup.Control, AdminMenuIds.PlayerControl, "menu.player.control", "menu.player.control_title", ControlActs(viewer, target)),
-            (AdminPlayerGroup.Move, AdminMenuIds.PlayerMove, "menu.player.move", "menu.player.move_title", MoveActs(viewer, target)),
         };
 
         var withHistory = target.SteamId != 0 && _database.Enabled && (BanListAvailable(viewer) || CommsListAvailable(viewer));
@@ -457,14 +456,6 @@ public sealed partial class AdminMenuService
                 Alive,
                 (p, _) => Do(() => _control.SetNoclip(issuer, p, !_control.IsNoclip(p)))));
         }
-
-        return [.. acts];
-    }
-
-    private Act[] MoveActs(IPlayer viewer, PlayerRef target)
-    {
-        var acts = new List<Act>();
-        var issuer = Issuer.From(viewer);
 
         if (Has(viewer, "admins.commands.goto"))
         {

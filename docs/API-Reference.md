@@ -257,7 +257,7 @@ For a menu renderer that draws `!admin` from data instead of parsing its text, a
 | `SanctionKind` | `Gag` = 1 (text chat), `Mute` = 2 (voice) |
 | `AdminPunishment` | `Gag`, `Mute`, `Silence` (both), `Kick`, `Ban` |
 | `AdminFlowStep` | `Target`, `Kind`, `Reason`, `Length`, `Scope`, `Confirm` |
-| `AdminPlayerGroup` | `Punish`, `Control`, `Move`, `History`, `Sessions` |
+| `AdminPlayerGroup` | `Punish`, `Control`, `Move` (no longer shown: its actions are under `Control`), `History`, `Sessions` |
 | `AdminPlaytimePeriod` | `Today`, `Week`, `Month`, `Year`, `Total` |
 | `AdminPlayerAction` | `Kick`, `Ban`, `Mute`, `Gag`, `Silence`, `Slay`, `Freeze`, `Slap`, `Respawn`, `RespawnWhereDied`, `Team`, `Swap`, `Beacon`, `Drug`, `God`, `Noclip`, `Goto`, `Bring`, `Rename`, `Health`, `Money` |
 | `AdminVoteKind` | `Poll`, `Kick` (a tie keeps the player), `Map` |
