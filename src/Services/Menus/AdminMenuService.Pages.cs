@@ -11,7 +11,6 @@ namespace Admins.Services.Menus;
 
 public sealed partial class AdminMenuService
 {
-    private const int PageJump = 5;
     private const long DoubleTapMs = 300;
 
     private static readonly MenuTextStyle InfoStyle = MenuTextStyle.Default.WithSize(MenuTextSize.Small).WithColor("#C8C8C8");
@@ -43,43 +42,10 @@ public sealed partial class AdminMenuService
     {
         onSelect(ctx.Session);
         return ValueTask.CompletedTask;
-    })
-    {
-        public override ValueTask<bool> HandleActionAsync(MenuActionContext context) =>
-            Jump(context) ? ValueTask.FromResult(true) : base.HandleActionAsync(context);
-    }
+    });
 
     /// <summary>A row that opens a page; returning null stays here. The page goes back here when it closes.</summary>
-    private sealed class Link(string text, Func<IMenuSession, IMenu?> next, string? id = null) : SubmenuComponent(text, next, id)
-    {
-        public override ValueTask<bool> HandleActionAsync(MenuActionContext context) =>
-            Jump(context) ? ValueTask.FromResult(true) : base.HandleActionAsync(context);
-    }
-
-    // A / D move a screen at a time; the framework binds them but gives plain rows no use for them.
-    private static bool Jump(MenuActionContext context)
-    {
-        int delta;
-        if (string.Equals(context.Action.Name, MenuActions.NavigateLeft.Name, StringComparison.OrdinalIgnoreCase)) delta = -PageJump;
-        else if (string.Equals(context.Action.Name, MenuActions.NavigateRight.Name, StringComparison.OrdinalIgnoreCase)) delta = PageJump;
-        else return false;
-
-        var session = context.Session;
-        var current = session.FocusedIndex;
-
-        if (delta < 0)
-        {
-            session.SetFocus(Math.Max(0, current + delta));
-            return true;
-        }
-
-        for (var index = current + delta; index > current; index--)
-        {
-            if (session.SetFocus(index)) break;
-        }
-
-        return true;
-    }
+    private sealed class Link(string text, Func<IMenuSession, IMenu?> next, string? id = null) : SubmenuComponent(text, next, id);
 
     private (IMenuBuilder Builder, PageState Page) NewPage(string id, string title) => (_core.Menu.CreateMenu(id).WithTitle(title), new PageState());
 

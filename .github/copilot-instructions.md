@@ -271,6 +271,7 @@ can draw who called it and the tally.
 | Nothing is typed into a menu; a free value prints the chat command (`PrintUsage`). In a punishment it is a step like any other (`Draft.InChat`): the flow goes on and its last step prints the command filled in with every pick (`FilledCommands`) | Chat plugins that take messages first swallow typed input; a command printed before the rest is picked leaves the admin to type it all |
 | A printed punishment names the player by SteamID64 (or IP when matched by IP), never `#userid`, and its length as one token (`CommandLength`). Live-only hints (rename, health, money) keep the shorter `#userid` | `TargetResolver` falls back from a stale `#userid` to a slot match, someone else, and a punishment must still reach a player who left; `Durations.Format` gives `1d 6h`, two arguments |
 | Rows that act at once take `Validating = page.Guard` | The second press of a double-tap must not pick on the page it opened |
+| Rows do not handle A / D (`NavigateLeft` / `NavigateRight`); only sliders and selectors may | They are the strafe keys: a five-row jump on them moved the cursor whenever an admin walked with the menu open |
 | Page ids are `AdminMenuIds` constants; every row carries an `Admins.Contract` record as its component `Tag` (`AdminMenuRows.cs`) and every page its subject as the menu `Tag` (`AdminMenuViews.cs`) | CustomHUD's `LockerProfiles.Admins()` picks its mouse views by id, and its Admins integration draws each row from its tag; a row without one draws plain |
 
 - Pages are built per viewer, filtered by permission, and opened as submenus of the page they were
@@ -280,7 +281,6 @@ can draw who called it and the tally.
   `ShowRows` at `PageState.RowsAt`), so a joining player cannot move the cursor; focus is restored
   by row `Tag`.
 - Open sessions are invalidated every second so live state (alive, time left, toggles) refreshes.
-- `Row` and `Link` turn A / D into five-row jumps.
 - `ViewerState` (slot and session) remembers the last reason and length per punishment kind;
   `RecentPlayers` keeps up to 50 leavers for 15 minutes, refilled from `player_sessions` on load.
 - Punishment rights are `CanPunish` / `CanLift`; `admins.menu.bans` and `admins.menu.comms` from the
