@@ -21,4 +21,8 @@ public sealed class Server : IServer
 
     [Column("GUID")]
     public string GUID { get; set; } = string.Empty;
+
+    /// <summary>Unix milliseconds of the server's last report; 0 = not since the column was added.</summary>
+    [Column("LastSeenAt")]
+    public long LastSeenAt { get; set; }
 }

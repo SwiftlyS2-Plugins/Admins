@@ -202,8 +202,12 @@ public sealed partial class AccessService : IAdminsManager, IGroupsManager, IDis
         var interval = _config.DatabaseSyncIntervalSeconds;
         if (interval > 0)
         {
-            // DelayAndRepeat, not RepeatBySeconds: the latter fires immediately and would double the startup load.
-            _syncTimer = _core.Scheduler.DelayAndRepeatBySeconds(interval, interval, RunReload);
+            // DelayAndRepeat, not RepeatBySeconds: the latter fires immediately and would double the startup load. A reload
+            // still waiting on a slow database is not queued behind.
+            _syncTimer = _core.Scheduler.DelayAndRepeatBySeconds(interval, interval, () =>
+            {
+                if (_reloadLock.CurrentCount > 0) RunReload();
+            });
         }
     }
 

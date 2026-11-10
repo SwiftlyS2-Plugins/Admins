@@ -161,6 +161,11 @@ public sealed partial class BansService
             _logger.LogError(ex, "Failed to mark ended bans Expired.");
         }
 
+        await RefreshExclusionsAsync(db).ConfigureAwait(false);
+    }
+
+    private async Task RefreshExclusionsAsync(IDbConnection db)
+    {
         try
         {
             _ipBanExcluded = await LoadExclusionsAsync(db).ConfigureAwait(false);

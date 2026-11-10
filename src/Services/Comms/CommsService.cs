@@ -54,6 +54,8 @@ public sealed partial class CommsService : ICommsManager, IDisposable
     private readonly CancellationTokenSource _voiceTimer;
     private volatile CommsConfiguration _config;
     private CancellationTokenSource? _syncTimer;
+    private int _syncing;
+    private long _upkeepDueAt;
 
     // Game thread only. Keyed by slot because the SteamID already reads 0 when the disconnect event fires.
     private readonly Dictionary<int, CacheEntry> _cache = [];
@@ -171,12 +173,20 @@ public sealed partial class CommsService : ICommsManager, IDisposable
         var interval = _config.DatabaseSyncIntervalSeconds;
         if (interval > 0)
         {
-            _syncTimer = _core.Scheduler.DelayAndRepeatBySeconds(interval, interval, () =>
-            {
-                MarkExpired();
-                LoadOnline();
-            });
+            _syncTimer = _core.Scheduler.DelayAndRepeatBySeconds(interval, interval, Sync);
         }
+    }
+
+    // None while the last reload is still running, so a slow database cannot pile them up.
+    private void Sync()
+    {
+        if (!_database.Enabled) return;
+
+        var players = OnlinePlayers();
+        if (Interlocked.Exchange(ref _syncing, 1) == 1) return;
+
+        if (AdminsDatabase.UpkeepDue(ref _upkeepDueAt)) MarkExpired();
+        _ = Load(players).ContinueWith(_ => Volatile.Write(ref _syncing, 0), TaskScheduler.Default);
     }
 
     private void MarkExpired()
@@ -197,17 +207,19 @@ public sealed partial class CommsService : ICommsManager, IDisposable
         });
     }
 
-    private void LoadOnline() => Load([.. _messenger.Humans().Where(p => p.IsAuthorized).Select(PlayerRef.Of)]);
+    private void LoadOnline() => Load(OnlinePlayers());
+
+    private List<PlayerRef> OnlinePlayers() => [.. _messenger.Humans().Where(p => p.IsAuthorized).Select(PlayerRef.Of)];
 
     // A sanction issued or lifted while the query runs bumps the slot's version, and the stale result is
     // re-queried instead of overwriting the fresher cache entry.
-    private void Load(IReadOnlyList<PlayerRef> players)
+    private Task Load(IReadOnlyList<PlayerRef> players)
     {
-        if (!_database.Enabled || players.Count == 0) return;
+        if (!_database.Enabled || players.Count == 0) return Task.CompletedTask;
 
         var versions = players.ToDictionary(p => p.Slot, p => _versions.GetValueOrDefault(p.Slot));
 
-        _ = Task.Run(async () =>
+        return Task.Run(async () =>
         {
             try
             {
@@ -216,6 +228,7 @@ public sealed partial class CommsService : ICommsManager, IDisposable
                 _core.Scheduler.NextTick(() =>
                 {
                     var stale = new List<PlayerRef>();
+                    var now = AdminsDatabase.NowMs;
 
                     foreach (var player in players)
                     {
@@ -227,7 +240,7 @@ public sealed partial class CommsService : ICommsManager, IDisposable
                             continue;
                         }
 
-                        _cache[player.Slot] = new CacheEntry(player.SessionId, [.. active.Where(s => Matches(s, player.SteamId, player.Ip))]);
+                        Refresh(player, [.. active.Where(s => Matches(s, player.SteamId, player.Ip))], now);
                     }
 
                     if (stale.Count > 0) Load(stale);
@@ -238,6 +251,24 @@ public sealed partial class CommsService : ICommsManager, IDisposable
                 _logger.LogError(ex, "Failed to load sanctions for {Count} player(s).", players.Count);
             }
         });
+    }
+
+    // Keeps what could not be stored (Id 0): it lasts until the player reconnects. A gag new to the cache was issued
+    // elsewhere while they played, and they are told as they would be for one given here.
+    private void Refresh(PlayerRef player, List<Sanction> loaded, long now)
+    {
+        if (_cache.TryGetValue(player.Slot, out var cached) && cached.SessionId == player.SessionId)
+        {
+            loaded.AddRange(cached.Sanctions.Where(s => s.Id == 0 && s.IsActive(now)));
+
+            if (loaded.FirstOrDefault(s => s.SanctionKind == SanctionKind.Gag && s.Id != 0 && !cached.Sanctions.Any(c => c.Id == s.Id)) is { } gag
+                && player.Resolve(_core) is { } online)
+            {
+                _messenger.Chat(online, "gag.message", gag.AdminName, _messenger.Timestamp(online, gag.ExpiresAt), gag.Reason);
+            }
+        }
+
+        _cache[player.Slot] = new CacheEntry(player.SessionId, loaded);
     }
 
     private async Task<IReadOnlyList<Sanction>> FindActiveForAsync(IReadOnlyList<PlayerRef> players)

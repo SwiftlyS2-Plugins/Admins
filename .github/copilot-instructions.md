@@ -9,11 +9,11 @@
 
 | Topic | Lives in |
 |---|---|
-| What server owners and admins use: features, install, config, commands, permissions, the menu | `README.md` |
+| What server owners and admins use: features, install, config, commands, permissions, the menu | The wiki (`Admins.wiki`, its own repository); `README.md` is its Home page with links rewritten |
 | The shared contract, for plugin authors | `docs/API-Reference.md` (every member), `docs/API-Integration.md` (how to use it) |
 | How the code works and what must not break | this file |
 
-The README says what a feature does for the person using it, never how it is built — mechanics,
+The wiki says what a feature does for the person using it, never how it is built — mechanics,
 invariants and rationale go here. Keep each fact in one place and link to it.
 
 ## Build
@@ -79,9 +79,10 @@ docs/                          API docs
   `CommsService.Here` does for its nullable kind. The unban lookup (`FindApplicableActiveAsync`)
   does not depend on it: an address finds every ban recorded with it.
 - A SteamID in `ip_ban_exclusions` is held only by bans on its own SteamID. `Matches` reads the
-  cached set (`_ipBanExcluded`, reloaded on every sync tick and after `!excludeipban`) and
-  `FindActiveBanAsync` counts the table, so the two can differ for at most a sync interval. Gags and
-  mutes ignore it.
+  cached set (`_ipBanExcluded`), which the sync tick reloads once a minute and again before it kicks
+  anyone it found, and `!excludeipban` after a change. `FindActiveBanAsync` counts the table, so only
+  the commands that read the set (`!banip`, the menu's immunity check) can be up to a minute behind.
+  Gags and mutes ignore it.
 - Entities kept past the call that spawned them are held as a `CHandle`: round cleanup removes
   plugin entities, and a held wrapper checks only its address, which a new entity can take. The
   beacon's beams are also marked changed (`*Updated()`) after `DispatchSpawn`, as every beam known
@@ -107,7 +108,9 @@ docs/                          API docs
   existing databases and web panels keep working. Never rename or retype a column.
   `player_sessions` is this plugin's own (`20270215000000`); its name avoids the `sessions` table
   web frameworks sharing the database tend to own. So is `ip_ban_exclusions` (`20270216000001`), and
-  the `Status` column added to `bans` and `sanctions` (`20270216000000`).
+  the `Status` column added to `bans` and `sanctions` (`20270216000000`), and their `SteamId64` and
+  `PlayerIp` indexes (`20270217000000`): every enforcement query finds rows through them, and without
+  them each sync tick scans both tables whole. `servers.LastSeenAt` (`20270218000000`) too.
 - Migrations `20270214103911`–`…918` reuse the split plugins' ids in the default `VersionInfo`
   ledger, which is what makes existing databases skip them. Never renumber or edit one. A new
   migration takes a new id, guards its create with `Schema.Table(...).Exists()`, and must run on
@@ -127,13 +130,27 @@ docs/                          API docs
 - In force is decided by `ExpiresAt` alone, in every query and in `Status`. The `Status` column maps
   to `StoredStatus` (the one property named apart from its column; Dommel's type map reads it back by
   `[Column]`) and only tells a lifted record from one that ran out. It lags: the sync ticks run
-  `AdminsDatabase.MarkExpiredAsync`, which marks ended `Active` rows `Expired` for outside readers.
+  `AdminsDatabase.MarkExpiredAsync` at most once a minute (`UpkeepDue`), which marks ended `Active`
+  rows `Expired` for outside readers.
+- Rows a web panel writes are enforced like another server's. The sync matches
+  `PlayerIp` exactly; only the join check also takes the `ip:port` form older rows have, and that
+  prefix match is why the join lookups still scan on PostgreSQL and SQLite.
 
 ## Servers and scope
 
 - Each server is the GUID in `data/Admins/server_id.txt`, imported once from `data/Admins.Core/`.
   **A new GUID detaches the server from every admin, group, ban and sanction** — never regenerate
   it to fix something.
+- `ServerService.Report` runs at Steam activation, on a GUID change and every 60 seconds, single-flight:
+  it writes this server's `servers` row (IP and port only once Steam has given the address, which
+  reads `0.0.0.0` before) and `LastSeenAt`, or inserts the row. A GUID generated this run has no row
+  and may stand for a lost file: `ClaimAddressAsync` takes over the row last seen at the same
+  IP and port only once it has gone `RecentlySeenMs` (10 min) without a report, and registers anew if
+  it moves meanwhile. Docker servers can all report the same in-container port, which is why a live
+  server's row is never taken. A row whose address changes between two of this server's own writes
+  means two servers share the GUID (`WarnIfShared`, once).
+- `sw_serverid` lists `servers` by `Id`; `use <Id>` calls `SetServerGUID`. The management commands
+  accept that `Id` wherever they take a server and store the GUID (`ToGuidsAsync`).
 - Admins and groups apply where their `Servers` list holds the GUID; bans and sanctions where
   `Server` is it or the global flag is set (`AppliesHere` on each service).
 - The contract's `Find…Async` and the menu's player history are not limited to this server, so the
@@ -166,10 +183,14 @@ docs/                          API docs
   `OnAdminLoad` fires when an admin's id, immunity or permissions change.
 - **Bans** are checked on Steam authorization and by the sync timer, in one query for the whole
   server. A ban kicks even when storing it fails.
+- A sync tick that finds the last one still querying does nothing, in Access, Bans and Comms alike,
+  so a short interval cannot pile queries onto a slow database.
 - **Comms** are cached per slot and enforced on chat and voice. A sanction issued or lifted while a
   reload is querying bumps the slot's version, and the stale result is queried again. A sanction
-  applies in memory even when storing fails. Admin chat is checked before the gag, so a gagged
-  player can still reach the admins.
+  applies in memory even when storing fails, and reloads keep it (`Id` 0) until the player
+  reconnects. A gag a reload finds that the cache did not hold was issued elsewhere, and the player is
+  told as for one issued here. Admin chat is checked before the gag, so a gagged player can still
+  reach the admins.
 - Contract events are raised through `Raise`, which logs a throwing handler; the handlers after it
   in the delegate are skipped.
 
@@ -264,7 +285,8 @@ can draw who called it and the tally.
 - Keys are `AdminsInterfaceKeys`, `Admins.*.V2`. Change members additively; a breaking change takes
   new keys. SwiftlyS2 binds consumers to the exports copy it read at server start, so a contract
   change needs a server restart.
-- `docs/API-Reference.md` lists every member; update it in the same change.
+- `docs/API-Reference.md` and the wiki's `API-Reference` page list every member; update both in the
+  same change.
 
 ## Translations
 

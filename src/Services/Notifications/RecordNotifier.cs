@@ -40,6 +40,7 @@ public sealed class RecordNotifier
         _core.Scheduler.NextTick(() =>
         {
             if (!_database.Enabled || _core.PlayerManager.GetPlayer(playerId) is not { IsFakeClient: false } player) return;
+            if (!_messenger.Humans().Any(p => _core.Permission.PlayerHasPermission(p.SteamID, "admins.notify"))) return;
 
             var target = PlayerRef.Of(player);
 

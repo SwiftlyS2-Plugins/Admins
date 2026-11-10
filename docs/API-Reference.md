@@ -249,7 +249,7 @@ For a menu renderer that draws `!admin` from data instead of parsing its text, a
 
 | Enum | Values |
 |------|--------|
-| `ImmunityMode` | `IgnoreImmunity` = 0, `ProtectFromLowerAccess` = 1, `ProtectFromEqualOrLowerAccess` = 2, `ProtectWithNoImmunityBypass` = 3. See [Immunity](../README.md#immunity) |
+| `ImmunityMode` | `IgnoreImmunity` = 0, `ProtectFromLowerAccess` = 1, `ProtectFromEqualOrLowerAccess` = 2, `ProtectWithNoImmunityBypass` = 3. See [Immunity](https://github.com/SwiftlyS2-Plugins/Admins/wiki/Admins-And-Groups#immunity) |
 | `RecordStatus` | `Active`, `Expired` (ran out), `All`, `Lifted` (lifted by an admin) |
 | `PunishmentStatus` | `Active` = 0, `Lifted` = 1, `Expired` = 2. In force is decided by `ExpiresAt`: lifting also ends a punishment now |
 | `BanType` | `SteamID` = 1, `IP` = 2 |

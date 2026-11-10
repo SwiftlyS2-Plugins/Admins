@@ -4,7 +4,7 @@ namespace Admins.Services.Comms;
 
 public sealed class CommsConfiguration
 {
-    [Description("Seconds between re-loads of the sanctions of every online player, so sanctions issued on other servers take effect. 0 disables the periodic reload.")]
+    [Description("Seconds between re-loads of the sanctions of every online player, so sanctions issued on other servers or written by a web panel take effect. Each reload is one indexed query, so a few seconds is fine. 0 disables the periodic reload.")]
     public float DatabaseSyncIntervalSeconds { get; set; } = 30;
 
     [Description("Reasons offered by the gag/mute menu.")]

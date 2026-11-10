@@ -4,7 +4,7 @@ namespace Admins.Services.Bans;
 
 public sealed class BansConfiguration
 {
-    [Description("Seconds between re-checks of every online player against the bans table, so bans issued on other servers take effect. 0 disables the periodic check.")]
+    [Description("Seconds between re-checks of every online player against the bans table, so bans issued on other servers or written by a web panel take effect. Each check is one indexed query, so a few seconds is fine. 0 disables the periodic check.")]
     public float DatabaseSyncIntervalSeconds { get; set; } = 30;
 
     [Description("Reasons offered by the ban menu.")]

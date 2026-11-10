@@ -343,3 +343,63 @@ public class Admins_AddIpBanExclusionsTable : Migration
         }
     }
 }
+
+// Every enforcement query finds punishments by SteamID or address; without these each one scans the whole table.
+[Migration(20270217000000)]
+public class Admins_IndexPunishmentLookups : Migration
+{
+    private static readonly string[] Tables = ["bans", "sanctions"];
+    private static readonly string[] Columns = ["SteamId64", "PlayerIp"];
+
+    public override void Up()
+    {
+        foreach (var table in Tables)
+        {
+            if (!Schema.Table(table).Exists()) continue;
+
+            foreach (var column in Columns)
+            {
+                if (!Schema.Table(table).Index($"IX_{table}_{column}").Exists())
+                {
+                    Create.Index($"IX_{table}_{column}").OnTable(table).OnColumn(column).Ascending();
+                }
+            }
+        }
+    }
+
+    public override void Down()
+    {
+        foreach (var table in Tables)
+        {
+            foreach (var column in Columns)
+            {
+                if (Schema.Table(table).Index($"IX_{table}_{column}").Exists())
+                {
+                    Delete.Index($"IX_{table}_{column}").OnTable(table);
+                }
+            }
+        }
+    }
+}
+
+// Refreshed every minute while a server runs: panels see which servers are up, and a server without its server_id.txt
+// does not take over the record of one still running at the same address.
+[Migration(20270218000000)]
+public class Admins_AddLastSeenAtToServers : Migration
+{
+    public override void Up()
+    {
+        if (Schema.Table("servers").Exists() && !Schema.Table("servers").Column("LastSeenAt").Exists())
+        {
+            Alter.Table("servers").AddColumn("LastSeenAt").AsInt64().NotNullable().WithDefaultValue(0);
+        }
+    }
+
+    public override void Down()
+    {
+        if (Schema.Table("servers").Column("LastSeenAt").Exists())
+        {
+            Delete.Column("LastSeenAt").FromTable("servers");
+        }
+    }
+}

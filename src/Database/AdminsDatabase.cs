@@ -18,6 +18,18 @@ public sealed class AdminsDatabase(ISwiftlyCore core, IOptionsMonitor<Configurat
 
     public static long NowMs => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
 
+    /// <summary>
+    /// Whether a sync tick's table upkeep is due: once a minute, however short the sync interval. Game thread.
+    /// </summary>
+    public static bool UpkeepDue(ref long dueAt)
+    {
+        var now = Environment.TickCount64;
+        if (now < dueAt) return false;
+
+        dueAt = now + 60_000;
+        return true;
+    }
+
     public static bool StatusIs(PunishmentStatus status, RecordStatus wanted) => wanted switch
     {
         RecordStatus.Active => status == PunishmentStatus.Active,

@@ -4,6 +4,7 @@ using Admins.Shared;
 using Dommel;
 using Microsoft.Extensions.Logging;
 using SwiftlyS2.Shared.Commands;
+using ServerRow = Admins.Database.Models.Server;
 
 namespace Admins.Services.Access;
 
@@ -89,7 +90,7 @@ public sealed partial class AccessService
         var args = context.Args;
         if (args.Length < 4)
         {
-            Syntax(issuer, context, "admins give", "<steamid64> <username> <immunity> [permissions] [groups] [server_guids]");
+            Syntax(issuer, context, "admins give", "<steamid64> <username> <immunity> [permissions] [groups] [servers]");
             return;
         }
 
@@ -114,6 +115,8 @@ public sealed partial class AccessService
 
         InBackground(issuer, async db =>
         {
+            if (!await ToGuidsAsync(issuer, db, servers).ConfigureAwait(false)) return;
+
             if (await db.FirstOrDefaultAsync<Admin>(a => a.Username == username && a.SteamId64 != id).ConfigureAwait(false) is not null)
             {
                 _messenger.ReplyLater(issuer, "command.admins.username_taken", username);
@@ -168,6 +171,7 @@ public sealed partial class AccessService
 
         var field = args[2].ToLowerInvariant();
         var value = string.Join(' ', args.Skip(3)).Trim();
+        List<string> servers = [];
         Action<Admin> change;
 
         switch (field)
@@ -189,9 +193,9 @@ public sealed partial class AccessService
                 change = admin => admin.Groups = groups;
                 break;
             case "servers":
-                var servers = SplitList([value], 0);
+                servers = SplitList([value], 0);
                 if (!ValidateServers(issuer, servers)) return;
-                change = admin => admin.Servers = servers;
+                change = admin => admin.Servers = MergeServers([], servers);
                 break;
             default:
                 _messenger.Reply(issuer, "command.admins.edit.invalid_field", field);
@@ -204,6 +208,8 @@ public sealed partial class AccessService
 
         InBackground(issuer, async db =>
         {
+            if (!await ToGuidsAsync(issuer, db, servers).ConfigureAwait(false)) return;
+
             var existing = await db.FirstOrDefaultAsync<Admin>(a => a.SteamId64 == id).ConfigureAwait(false);
             if (existing is null)
             {
@@ -328,6 +334,8 @@ public sealed partial class AccessService
 
         InBackground(issuer, async db =>
         {
+            if (!await ToGuidsAsync(issuer, db, servers).ConfigureAwait(false)) return;
+
             var existing = await FindGroupAsync(db, groupName).ConfigureAwait(false);
 
             if (existing is null)
@@ -576,10 +584,29 @@ public sealed partial class AccessService
 
     private bool ValidateServers(Issuer issuer, IEnumerable<string> servers)
     {
-        if (servers.FirstOrDefault(s => !Guid.TryParse(s, out _)) is not { } invalid) return true;
+        if (servers.FirstOrDefault(s => !Guid.TryParse(s, out _) && !(long.TryParse(s, out var number) && number > 0)) is not { } invalid) return true;
 
         _messenger.Reply(issuer, "command.admins.invalid_server_guid", invalid);
         return false;
+    }
+
+    // A server is named by its number from serverid or by its GUID; the rows store the GUID, so numbers are replaced in place.
+    private async Task<bool> ToGuidsAsync(Issuer issuer, IDbConnection db, List<string> servers)
+    {
+        for (var i = 0; i < servers.Count; i++)
+        {
+            if (Guid.TryParse(servers[i], out _)) continue;
+
+            if (await db.GetAsync<ServerRow>(long.Parse(servers[i])).ConfigureAwait(false) is not { } row)
+            {
+                _messenger.ReplyLater(issuer, "command.serverid.not_found", servers[i]);
+                return false;
+            }
+
+            servers[i] = row.GUID;
+        }
+
+        return true;
     }
 
     private bool RequireDatabase(Issuer issuer)

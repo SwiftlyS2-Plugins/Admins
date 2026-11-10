@@ -31,6 +31,8 @@ public sealed partial class BansService : IBansManager, IDisposable
     private volatile BansConfiguration _config;
     private volatile IReadOnlySet<ulong> _ipBanExcluded = new HashSet<ulong>();
     private CancellationTokenSource? _syncTimer;
+    private int _checking;
+    private long _upkeepDueAt;
 
     public BansService(
         ISwiftlyCore core,
@@ -125,20 +127,23 @@ public sealed partial class BansService : IBansManager, IDisposable
         }
     }
 
-    // One query for the whole server instead of one per player. The same tick keeps the table's statuses and the IP ban
-    // exclusions in step with other servers.
+    // One query for the whole server instead of one per player, and none while the last is still running. The table's
+    // statuses and the IP ban exclusions are brought in step with other servers once a minute.
     private void CheckOnlinePlayers()
     {
         if (!_database.Enabled) return;
 
         var online = _messenger.Humans().Where(p => p.IsAuthorized).Select(PlayerRef.Of).ToList();
+        if (Interlocked.Exchange(ref _checking, 1) == 1) return;
+
+        var upkeep = AdminsDatabase.UpkeepDue(ref _upkeepDueAt);
 
         _ = Task.Run(async () =>
         {
             try
             {
                 using var db = _database.Connect();
-                await SyncTablesAsync(db).ConfigureAwait(false);
+                if (upkeep) await SyncTablesAsync(db).ConfigureAwait(false);
                 if (online.Count == 0) return;
 
                 var steamIds = online.Select(p => (long)p.SteamId).Where(id => id != 0).Distinct().ToList();
@@ -158,6 +163,9 @@ public sealed partial class BansService : IBansManager, IDisposable
 
                 if (bans.Count == 0) return;
 
+                // A kick is not taken back, so one through an address waits for the exclusions as they are now.
+                if (!upkeep) await RefreshExclusionsAsync(db).ConfigureAwait(false);
+
                 _core.Scheduler.NextTick(() =>
                 {
                     foreach (var player in online)
@@ -169,6 +177,10 @@ public sealed partial class BansService : IBansManager, IDisposable
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Periodic ban check failed.");
+            }
+            finally
+            {
+                Volatile.Write(ref _checking, 0);
             }
         });
     }
