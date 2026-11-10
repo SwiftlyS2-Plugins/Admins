@@ -161,7 +161,7 @@ public sealed class VotesService : IDisposable
             return;
         }
 
-        if (maps.FirstOrDefault(m => !m.StartsWith("ws:", StringComparison.OrdinalIgnoreCase) && !_core.Engine.IsMapValid(m)) is { } invalid)
+        if (maps.FirstOrDefault(m => !_server.IsKnownMap(m)) is { } invalid)
         {
             _messenger.Reply(issuer, "command.map_not_found", invalid);
             return;
@@ -200,7 +200,7 @@ public sealed class VotesService : IDisposable
 
         var vote = new Vote
         {
-            Timer = _core.Scheduler.DelayAndRepeatBySeconds(1f, 1f, Tick),
+            Timer = _core.Scheduler.DelayAndRepeatGuarded(1f, 1f, _logger, Tick),
             Kind = kind,
             StartedBy = issuer.Name,
             Target = target,

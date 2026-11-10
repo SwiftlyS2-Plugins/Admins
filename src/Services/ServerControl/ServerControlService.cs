@@ -117,8 +117,12 @@ public sealed class ServerControlService
     public bool IsKnownMap(string map)
     {
         var name = map.Trim();
-        return name.StartsWith("ws:", StringComparison.OrdinalIgnoreCase) ? name.Length > 3 : name.Length > 0 && _core.Engine.IsMapValid(name);
+        return name.StartsWith("ws:", StringComparison.OrdinalIgnoreCase) ? IsWorkshopName(name[3..]) : name.Length > 0 && _core.Engine.IsMapValid(name);
     }
+
+    // Pasted into a server command, where ';' or a line break would start another one and '"' would unbalance its quoting.
+    private static bool IsWorkshopName(string name) =>
+        name.Length > 0 && !name.Any(c => c is ';' or '"' || char.IsWhiteSpace(c) || char.IsControl(c));
 
     /// <summary>
     /// Changes the map after a short delay. <c>ws:&lt;id&gt;</c> or <c>ws:&lt;name&gt;</c> selects a workshop map.
@@ -137,7 +141,7 @@ public sealed class ServerControlService
         if (name.StartsWith("ws:", StringComparison.OrdinalIgnoreCase))
         {
             var workshop = name[3..];
-            if (workshop.Length == 0)
+            if (!IsWorkshopName(workshop))
             {
                 _messenger.Reply(issuer, "command.map_not_found", name);
                 return false;

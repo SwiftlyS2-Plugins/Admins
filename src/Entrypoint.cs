@@ -16,6 +16,7 @@ using Admins.Services.Votes;
 using Admins.Shared;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using SwiftlyS2.Shared;
 using SwiftlyS2.Shared.Plugins;
@@ -73,10 +74,17 @@ public sealed class AdminsPlugin(ISwiftlyCore core) : BasePlugin(core)
 
         _services = services.BuildServiceProvider();
 
-        // Before any service opens the database.
+        // Before any service opens the database. Logged, not thrown: SwiftlyS2 unloads a plugin whose Load throws.
         if (_services.GetRequiredService<IOptionsMonitor<Configuration>>().CurrentValue.UseDatabase)
         {
-            MigrationRunner.Run(Core);
+            try
+            {
+                MigrationRunner.Run(Core);
+            }
+            catch (Exception ex)
+            {
+                Core.Logger.LogError(ex, "Database migrations failed; loading without them. Database features resume once the database is reachable; restart then to apply schema changes.");
+            }
         }
 
         // Resolving constructs each service, which registers its commands and listeners.

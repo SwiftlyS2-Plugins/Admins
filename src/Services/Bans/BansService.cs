@@ -123,7 +123,7 @@ public sealed partial class BansService : IBansManager, IDisposable
         var interval = _config.DatabaseSyncIntervalSeconds;
         if (interval > 0)
         {
-            _syncTimer = _core.Scheduler.DelayAndRepeatBySeconds(interval, interval, CheckOnlinePlayers);
+            _syncTimer = _core.Scheduler.DelayAndRepeatGuarded(interval, interval, _logger, CheckOnlinePlayers);
         }
     }
 

@@ -46,7 +46,7 @@ src/
     Presence/                  join and leave messages, !hide, the status override
     Sessions/                  player_sessions: one row per connection, and !sessions
     Esp/, Votes/, ServerControl/, Server/, Notifications/
-  Shared/                      Messenger + Issuer, TargetResolver, PlayerRef + MenuShortcuts, Formatting
+  Shared/                      Messenger + Issuer, TargetResolver, PlayerRef + MenuShortcuts, Formatting, Timers
 resources/translations/        en.jsonc (the reference), pt-BR.jsonc
 docs/                          API docs
 ```
@@ -63,6 +63,10 @@ docs/                          API docs
   on those services and not the other way round.
 - `PlayerControlService` holds the player actions. Each checks immunity itself, replies to the
   issuer on failure and announces success, whether a command or the menu called it.
+- `ServerControlService.ChangeMap` and `IsKnownMap`, which `!votemap` checks its maps with, refuse a
+  `ws:` name holding `;`, `"`, whitespace or a control character: it goes into
+  `ds_workshop_changelevel`, a server command, where `;` would start another — `!rcon` for anyone
+  with `!map`.
 - `TargetResolver` tries `@` selectors, `#userid`, then any SteamID form, then a name typed in full
   or a bare user id, then a part of a name, all lowercased. Two matches at one step are ambiguous
   and target nobody. `@all`, `@t`, `@ct`, `@spec`, `@alive` and `@dead` are read from the controller:
@@ -118,15 +122,19 @@ docs/                          API docs
 - `MigrationRunner` reads the connection string from an **unopened** connection — an opened
   `MySqlConnection` drops the password — and dispatches on the configured driver name. The plugin
   ships MySqlConnector, Npgsql and System.Data.SQLite because FluentMigrator loads the driver from
-  the plugin's own folder.
+  the plugin's own folder. A failed run is logged and `Load` goes on: SwiftlyS2 unloads a plugin
+  whose `Load` throws, and every other database path recovers once the database is back; pending
+  migrations then wait for a restart.
 - Dommel over Dapper, with `[Table]`, `[Column]`, `[Key]` and `[Ignore]`. List columns are JSON
   strings behind `*Json` properties; `JsonList.Parse` reads a malformed cell as an empty list rather
-  than making every admin unloadable. Paged queries need `.Select()` before `.Where(...)`,
+  than making every admin unloadable, and drops `null` entries, which every reader would trim. Paged queries need `.Select()` before `.Where(...)`,
   `CountAsync` returns `long`, and a nullable enum folded into one predicate does not translate —
   spell out each case (`CommsService.Here`). Dapper floats (`2.*`) because `SwiftlyS2.CS2` raises
   its floor.
 - Times are Unix milliseconds (`AdminsDatabase.NowMs`); `ExpiresAt = 0` is permanent. Nothing
-  deletes a ban or sanction: lifting marks it `Lifted` and sets `ExpiresAt` to now.
+  deletes a ban or sanction: lifting marks it `Lifted` and sets `ExpiresAt` to now. A typed length
+  stops at 1000 years (`Durations.TryParse`), and `Messenger.Timestamp` clamps what a web panel wrote
+  to the years a date can hold: kicks and gags format the expiry before they act.
 - In force is decided by `ExpiresAt` alone, in every query and in `Status`. The `Status` column maps
   to `StoredStatus` (the one property named apart from its column; Dommel's type map reads it back by
   `[Column]`) and only tells a lifted record from one that ran out. It lags: the sync ticks run
@@ -173,8 +181,13 @@ docs/                          API docs
   `Messenger.IsConnected(issuer)` before touching its player, or reply with `ReplyLater`.
 - `Core.Menu` handlers stay on the game thread while `Validating` and the body complete
   synchronously; a handler that awaits continues off it.
-- Repeating timers use `DelayAndRepeatBySeconds`: `RepeatBySeconds` fires at once and doubles the
-  startup load.
+- Repeating timers use `DelayAndRepeatGuarded` (`Shared/Timers.cs`), never `RepeatBySeconds`, which
+  fires at once and doubles the startup load. SwiftlyS2 re-arms a repeating timer only after its
+  callback returns, so one throw stopped it for good — the voice timer is all that mutes a player who
+  joins muted. The beacon's is left bare: a pulse that threw part-way would leave its beams behind on
+  every retry.
+- `NextTickAsync` callbacks outlive an unload, unlike `NextTick`'s, so `ReconcileAll` and `Forget`,
+  which reloads and lifts reach through it, return once their service is disposed.
 
 ## Enforcement
 
@@ -225,7 +238,8 @@ docs/                          API docs
   after every map change, which would otherwise bring the picker back.
 - `StatusService` answers a client's `status` — it reaches the server as a message the console's
   own `status` never passes through — with the configured lines, leaving hidden admins out for
-  whoever cannot see them.
+  whoever cannot see them. It answers each player at most once a second: a client can send `status`
+  as fast as it likes, and every answer is a console line per player.
 - `EspService` gives each player a pair of bone-merged props, transmit-blocked for every slot except
   allowed viewers; a new connection is blocked before its first snapshot. Entity work runs in
   `OnTick`, one new pair per tick and none in the first ticks of a map, because building every pair
@@ -273,8 +287,9 @@ can draw who called it and the tally.
   old menu plugin still grant local bans and comms.
 - `IAdminMenuAPI` entries come after the built-in ones. A throwing title drops the entry; a
   throwing build shows `menu.entry_failed`.
-- The root's Players, Bans and Comms links show live counts through a `TextProvider`, and CustomHUD's
-  sidebar leaves out root entries that have one.
+- Root links are static: fixed labels, an `AdminMenuIds` id each, and no `TextProvider`,
+  `VisibleWhen` or `EnabledWhen`. CustomHUD's sidebar mirrors only static submenu rows, so a root
+  entry with any of them drops out of it — which is why the root's live counts were removed.
 
 ## Shared contract
 
@@ -296,3 +311,6 @@ can draw who called it and the tally.
   single-word keys such as `none`, `yes`, `gag` and `global_gag` are looked up directly. An
   unused-key scan that misses either flags live keys.
 - Labels are plain text without a trailing `...`. Chat strings use SwiftlyS2 colour tags.
+- `Messenger.Text` never throws: a translation that does not fit its arguments (a stray `{` or `}`, a
+  missing placeholder) is shown unformatted and logged once per key, since kicks and gags build their
+  message before they act.

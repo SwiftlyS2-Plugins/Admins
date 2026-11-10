@@ -48,7 +48,7 @@ public sealed class ServerService : IServerManager, IDisposable
 
         LoadGuid();
         core.Registrator.Register(this);
-        _heartbeat = core.Scheduler.DelayAndRepeatBySeconds(HeartbeatSeconds, HeartbeatSeconds, Report);
+        _heartbeat = core.Scheduler.DelayAndRepeatGuarded(HeartbeatSeconds, HeartbeatSeconds, logger, Report);
     }
 
     /// <summary>

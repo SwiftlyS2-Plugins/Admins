@@ -1,4 +1,6 @@
+using System.Collections.Concurrent;
 using Admins.Models;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using SwiftlyS2.Shared;
 using SwiftlyS2.Shared.Commands;
@@ -44,14 +46,21 @@ public sealed class Issuer
 
 public sealed class Messenger : IDisposable
 {
+    // Rows written elsewhere can hold any value, and FromUnixTimeMilliseconds throws outside years 1-9999.
+    private static readonly long MinUnixMs = DateTimeOffset.MinValue.ToUnixTimeMilliseconds();
+    private static readonly long MaxUnixMs = DateTimeOffset.MaxValue.ToUnixTimeMilliseconds();
+
     private readonly ISwiftlyCore _core;
+    private readonly ILogger<Messenger> _logger;
     private readonly IDisposable? _subscription;
+    private readonly ConcurrentDictionary<string, byte> _unformattable = new();
     private volatile string _prefix;
     private volatile TimeZoneInfo _timeZone;
 
-    public Messenger(ISwiftlyCore core, IOptionsMonitor<Configuration> config)
+    public Messenger(ISwiftlyCore core, ILogger<Messenger> logger, IOptionsMonitor<Configuration> config)
     {
         _core = core;
+        _logger = logger;
         _prefix = config.CurrentValue.Prefix;
         _timeZone = ResolveTimeZone(config.CurrentValue.TimeZone);
         _subscription = config.OnChange(c =>
@@ -63,7 +72,21 @@ public sealed class Messenger : IDisposable
 
     public ILocalizer For(IPlayer? player) => player is null ? _core.Localizer : _core.Translation.GetPlayerLocalizer(player);
 
-    public string Text(IPlayer? player, string key, params object[] args) => For(player)[key, args];
+    public string Text(IPlayer? player, string key, params object[] args)
+    {
+        var localizer = For(player);
+
+        try
+        {
+            return localizer[key, args];
+        }
+        catch (FormatException)
+        {
+            // Kicks and gags build their message before they act, so a translation with a stray brace must not throw.
+            if (_unformattable.TryAdd(key, 0)) _logger.LogWarning("Translation '{Key}' does not fit its {Count} argument(s); showing it unformatted.", key, args.Length);
+            return localizer[key];
+        }
+    }
 
     public void Chat(IPlayer player, string key, params object[] args) => player.SendChat($"{_prefix} {Text(player, key, args)}");
 
@@ -143,7 +166,7 @@ public sealed class Messenger : IDisposable
     public string Timestamp(IPlayer? viewer, long unixMs) =>
         unixMs == 0
             ? Text(viewer, "time.never")
-            : TimeZoneInfo.ConvertTime(DateTimeOffset.FromUnixTimeMilliseconds(unixMs), _timeZone).ToString("yyyy-MM-dd HH:mm:ss");
+            : TimeZoneInfo.ConvertTime(DateTimeOffset.FromUnixTimeMilliseconds(Math.Clamp(unixMs, MinUnixMs, MaxUnixMs)), _timeZone).ToString("yyyy-MM-dd HH:mm:ss");
 
     public string Duration(IPlayer? viewer, long lengthMs) =>
         lengthMs <= 0 ? Text(viewer, "time.permanent") : Durations.Format(TimeSpan.FromMilliseconds(lengthMs));

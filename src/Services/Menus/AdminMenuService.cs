@@ -90,7 +90,7 @@ public sealed partial class AdminMenuService : IAdminMenuAPI, IDisposable
         core.Registrator.Register(this);
 
         // Pages show live state (alive, time left, toggles); frames are only sent when a session is invalidated.
-        _refresh = core.Scheduler.DelayAndRepeatBySeconds(1f, 1f, () =>
+        _refresh = core.Scheduler.DelayAndRepeatGuarded(1f, 1f, logger, () =>
         {
             _open.RemoveWhere(session => !session.IsOpen);
             foreach (var session in _open) session.Invalidate();

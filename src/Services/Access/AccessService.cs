@@ -35,6 +35,7 @@ public sealed partial class AccessService : IAdminsManager, IGroupsManager, IDis
     private volatile AccessConfiguration _config;
     private ImmunityMode _immunityMode;
     private CancellationTokenSource? _syncTimer;
+    private bool _disposed;
 
     public AccessService(
         ISwiftlyCore core,
@@ -121,7 +122,7 @@ public sealed partial class AccessService : IAdminsManager, IGroupsManager, IDis
     {
         foreach (var name in admin.Groups)
         {
-            if (snapshot.GroupsByName.TryGetValue(name.Trim(), out var group) && AppliesHere(group.Servers))
+            if (name is not null && snapshot.GroupsByName.TryGetValue(name.Trim(), out var group) && AppliesHere(group.Servers))
             {
                 yield return group;
             }
@@ -204,7 +205,7 @@ public sealed partial class AccessService : IAdminsManager, IGroupsManager, IDis
         {
             // DelayAndRepeat, not RepeatBySeconds: the latter fires immediately and would double the startup load. A reload
             // still waiting on a slow database is not queued behind.
-            _syncTimer = _core.Scheduler.DelayAndRepeatBySeconds(interval, interval, () =>
+            _syncTimer = _core.Scheduler.DelayAndRepeatGuarded(interval, interval, _logger, () =>
             {
                 if (_reloadLock.CurrentCount > 0) RunReload();
             });
@@ -231,6 +232,9 @@ public sealed partial class AccessService : IAdminsManager, IGroupsManager, IDis
 
     private void ReconcileAll()
     {
+        // ReloadAsync gets here through NextTickAsync, which SwiftlyS2 still runs after an unload.
+        if (_disposed) return;
+
         var connected = new HashSet<int>();
 
         foreach (var player in _core.PlayerManager.GetAllPlayers())
@@ -324,6 +328,7 @@ public sealed partial class AccessService : IAdminsManager, IGroupsManager, IDis
 
     public void Dispose()
     {
+        _disposed = true;
         _syncTimer?.Cancel();
         _configSubscription?.Dispose();
         _server.GuidChanged -= ReconcileAll;

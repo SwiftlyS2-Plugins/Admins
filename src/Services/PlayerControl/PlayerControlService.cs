@@ -1,3 +1,4 @@
+using System.Text;
 using Admins.Models;
 using Admins.Services.Access;
 using Admins.Shared;
@@ -214,6 +215,7 @@ public sealed partial class PlayerControlService : IDisposable
             {
                 StopBeacon(target.Slot);
                 var beacon = new Beacon(PlayerRef.Of(target));
+                // Unguarded on purpose: a pulse that threw part-way through spawning would leave its beams behind on every retry.
                 beacon.Timer = _core.Scheduler.DelayAndRepeatBySeconds(BeaconStepSeconds, BeaconStepSeconds, () => BeaconStep(beacon));
                 _core.Scheduler.StopOnMapChange(beacon.Timer);
                 _beacons[target.Slot] = beacon;
@@ -277,7 +279,7 @@ public sealed partial class PlayerControlService : IDisposable
             {
                 StopDrug(target.Slot, clearScreen: false);
                 var reference = PlayerRef.Of(target);
-                var timer = _core.Scheduler.DelayAndRepeatBySeconds(DrugIntervalSeconds, DrugIntervalSeconds, () => DrugTick(reference));
+                var timer = _core.Scheduler.DelayAndRepeatGuarded(DrugIntervalSeconds, DrugIntervalSeconds, _logger, () => DrugTick(reference));
                 _core.Scheduler.StopOnMapChange(timer);
                 _drugs[target.Slot] = (target.SessionId, timer);
                 DrugTick(reference);
@@ -360,6 +362,13 @@ public sealed partial class PlayerControlService : IDisposable
 
     public bool Rename(Issuer issuer, IPlayer target, string name)
     {
+        // The controller keeps the name in 128 bytes, terminator included; a longer one throws on assignment.
+        if (name.Length == 0 || Encoding.UTF8.GetByteCount(name) > 127)
+        {
+            _messenger.Reply(issuer, "command.invalid_value_range", name, "new_name", 1, 127);
+            return false;
+        }
+
         if (!CanAct(issuer, target) || target.Controller is not { IsValid: true } controller) return false;
 
         var old = Names.Of(target);

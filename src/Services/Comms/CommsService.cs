@@ -56,6 +56,7 @@ public sealed partial class CommsService : ICommsManager, IDisposable
     private CancellationTokenSource? _syncTimer;
     private int _syncing;
     private long _upkeepDueAt;
+    private bool _disposed;
 
     // Game thread only. Keyed by slot because the SteamID already reads 0 when the disconnect event fires.
     private readonly Dictionary<int, CacheEntry> _cache = [];
@@ -93,7 +94,7 @@ public sealed partial class CommsService : ICommsManager, IDisposable
         });
 
         core.Registrator.Register(this);
-        _voiceTimer = core.Scheduler.DelayAndRepeatBySeconds(1f, 1f, EnforceVoice);
+        _voiceTimer = core.Scheduler.DelayAndRepeatGuarded(1f, 1f, logger, EnforceVoice);
         presence.Changed += OnPresenceChanged;
         RestartSyncTimer();
 
@@ -173,7 +174,7 @@ public sealed partial class CommsService : ICommsManager, IDisposable
         var interval = _config.DatabaseSyncIntervalSeconds;
         if (interval > 0)
         {
-            _syncTimer = _core.Scheduler.DelayAndRepeatBySeconds(interval, interval, Sync);
+            _syncTimer = _core.Scheduler.DelayAndRepeatGuarded(interval, interval, _logger, Sync);
         }
     }
 
@@ -532,6 +533,9 @@ public sealed partial class CommsService : ICommsManager, IDisposable
 
     private void Forget(IReadOnlyList<Sanction> sanctions)
     {
+        // LiftAsync gets here through NextTickAsync, which SwiftlyS2 still runs after an unload.
+        if (_disposed) return;
+
         var ids = sanctions.Where(s => s.Id != 0).Select(s => s.Id).ToHashSet();
 
         foreach (var (slot, entry) in _cache)
@@ -752,6 +756,7 @@ public sealed partial class CommsService : ICommsManager, IDisposable
     // Unloading must not leave anyone muted by a plugin that is no longer there to unmute them.
     public void Dispose()
     {
+        _disposed = true;
         _voiceTimer.Cancel();
         _syncTimer?.Cancel();
         _configSubscription?.Dispose();

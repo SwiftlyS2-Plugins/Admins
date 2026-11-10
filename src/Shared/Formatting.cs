@@ -78,8 +78,11 @@ public static class SteamIds
 
 public static class Durations
 {
+    // Reads as permanent while staying far short of year 9999, past which no expiry can be shown as a date.
+    private static readonly TimeSpan Longest = TimeSpan.FromDays(365 * 1000);
+
     /// <summary>
-    /// Parses relative time such as <c>30m</c>, <c>12h</c>, <c>7d</c>. <c>0</c> is permanent (zero).
+    /// Parses relative time such as <c>30m</c>, <c>12h</c>, <c>7d</c>, up to 1000 years. <c>0</c> is permanent (zero).
     /// </summary>
     public static bool TryParse(string? value, out TimeSpan duration)
     {
@@ -89,7 +92,7 @@ public static class Durations
         var text = value.Trim();
         if (text == "0") return true;
 
-        if (!TimeSpanParser.TryParse(text, out var parsed) || parsed <= TimeSpan.Zero) return false;
+        if (!TimeSpanParser.TryParse(text, out var parsed) || parsed <= TimeSpan.Zero || parsed > Longest) return false;
 
         duration = parsed;
         return true;

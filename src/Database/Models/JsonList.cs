@@ -12,7 +12,11 @@ internal static class JsonList
 
         try
         {
-            return JsonSerializer.Deserialize<List<string>>(value) ?? [];
+            var list = JsonSerializer.Deserialize<List<string>>(value) ?? [];
+
+            // Null entries too ("[null]" is what JSON.stringify([undefined]) writes): every reader trims each one.
+            list.RemoveAll(entry => entry is null);
+            return list;
         }
         catch (JsonException)
         {

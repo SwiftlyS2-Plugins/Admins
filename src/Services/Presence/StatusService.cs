@@ -15,10 +15,16 @@ namespace Admins.Services.Presence;
 /// </summary>
 public sealed partial class StatusService
 {
+    // A client can send status as fast as it likes, and each answer is a console line per player.
+    private const long CooldownMs = 1000;
+
     private readonly ISwiftlyCore _core;
     private readonly IOptionsMonitor<Configuration> _config;
     private readonly PresenceService _presence;
     private readonly Messenger _messenger;
+
+    // Game thread only, keyed by slot.
+    private readonly Dictionary<int, (ulong SessionId, long At)> _answered = [];
 
     public StatusService(ISwiftlyCore core, IOptionsMonitor<Configuration> config, PresenceService presence, Messenger messenger)
     {
@@ -47,6 +53,10 @@ public sealed partial class StatusService
     private void Send(int slot, ulong sessionId)
     {
         if (_core.PlayerManager.GetPlayer(slot) is not { IsFakeClient: false } viewer || viewer.SessionId != sessionId) return;
+
+        var tick = Environment.TickCount64;
+        if (_answered.TryGetValue(slot, out var last) && last.SessionId == sessionId && tick - last.At < CooldownMs) return;
+        _answered[slot] = (sessionId, tick);
 
         var config = _config.CurrentValue.Status;
 

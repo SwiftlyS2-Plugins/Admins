@@ -61,8 +61,8 @@ public sealed partial class SessionsService : IDisposable
         Cleanup();
 
         core.Registrator.Register(this);
-        _heartbeat = core.Scheduler.DelayAndRepeatBySeconds(HeartbeatSeconds, HeartbeatSeconds, Heartbeat);
-        _cleanup = core.Scheduler.DelayAndRepeatBySeconds(CleanupSeconds, CleanupSeconds, Cleanup);
+        _heartbeat = core.Scheduler.DelayAndRepeatGuarded(HeartbeatSeconds, HeartbeatSeconds, logger, Heartbeat);
+        _cleanup = core.Scheduler.DelayAndRepeatGuarded(CleanupSeconds, CleanupSeconds, logger, Cleanup);
 
         // Covers a hot reload; on a cold start nobody is connected yet.
         core.Scheduler.NextTick(Heartbeat);
