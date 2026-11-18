@@ -23,7 +23,7 @@ using SwiftlyS2.Shared.Plugins;
 
 namespace Admins;
 
-[PluginMetadata(Id = "Admins", Version = "2.0.0", Name = "Admins", Author = "Swiftly Development Team", Description = "Admins, groups, bans, gags and mutes, player commands and the admin menu.")]
+[PluginMetadata(Id = "Admins", Version = "1.0.0", Name = "Admins", Author = "Swiftly Development Team", Description = "Admins, groups, bans, gags and mutes, player commands and the admin menu.")]
 public sealed class AdminsPlugin(ISwiftlyCore core) : BasePlugin(core)
 {
     private ServiceProvider? _services;

@@ -13,7 +13,7 @@
 
 > [!NOTE]
 > **Running `Admins.Core`, `Admins.Bans`, `Admins.Comms`, `Admins.Menu` or `Admins.SuperCommands`?**<br>
-> Admins 2.0 replaces all five and keeps their database. Read [Upgrading to 2.0](../../wiki/Upgrading-To-2.0) before you swap them.
+> Admins 1.0 replaces all five and keeps their database. Read [Upgrading to 1.0](../../wiki/Upgrading-To-1.0) before you swap them.
 
 ---
 
@@ -38,7 +38,7 @@ All in one plugin.
 |-------|-------------|
 | **[Features](../../wiki/Features)** | Everything Admins does |
 | **[Installation](../../wiki/Installation)** | Install and verify |
-| **[Upgrading to 2.0](../../wiki/Upgrading-To-2.0)** | From the five 1.x plugins: what carries over and what changes |
+| **[Upgrading to 1.0](../../wiki/Upgrading-To-1.0)** | From the five beta plugins: what carries over and what changes |
 | **[Commands](../../wiki/Commands)** | Every command, with its permission |
 | **[Menus](../../wiki/Menus)** | The `!admin` menu |
 | **[Configuration](../../wiki/Configuration)** | Every setting, with defaults |
