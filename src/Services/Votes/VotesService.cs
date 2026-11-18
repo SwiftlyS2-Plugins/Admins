@@ -1,0 +1,379 @@
+using Admins.Contract;
+using Admins.Services.Access;
+using Admins.Services.ServerControl;
+using Admins.Shared;
+using Microsoft.Extensions.Logging;
+using SwiftlyS2.Shared;
+using SwiftlyS2.Shared.Commands;
+using SwiftlyS2.Shared.Events;
+using SwiftlyS2.Shared.Menu;
+using SwiftlyS2.Shared.Menu.Components;
+using SwiftlyS2.Shared.Players;
+using SwiftlyS2.Shared.ProtobufDefinitions;
+
+namespace Admins.Services.Votes;
+
+public sealed class VotesService : IDisposable
+{
+    public const string BallotMenuId = "admins.vote";
+
+    private const int VoteSeconds = 30;
+    private const string Permission = "admins.commands.vote";
+
+    // The ballot opens unasked, often while the player is pressing E in another menu.
+    private const long BallotGuardMs = 750;
+
+    private readonly ISwiftlyCore _core;
+    private readonly ILogger<VotesService> _logger;
+    private readonly AccessService _access;
+    private readonly Messenger _messenger;
+    private readonly TargetResolver _targets;
+    private readonly ServerControlService _server;
+
+    // Game thread only.
+    private Vote? _vote;
+
+    public VotesService(ISwiftlyCore core, ILogger<VotesService> logger, AccessService access, Messenger messenger, TargetResolver targets, ServerControlService server)
+    {
+        _core = core;
+        _logger = logger;
+        _access = access;
+        _messenger = messenger;
+        _targets = targets;
+        _server = server;
+
+        core.Registrator.Register(this);
+    }
+
+    private sealed class Vote : IAdminVote
+    {
+        public required CancellationTokenSource Timer { get; init; }
+        public required AdminVoteKind Kind { get; init; }
+        public required string StartedBy { get; init; }
+        public AdminPlayerRow? Target { get; init; }
+        public required Func<IPlayer?, string> Title { get; init; }
+        public required int OptionCount { get; init; }
+        public required Func<IPlayer?, int, string> OptionText { get; init; }
+        public required HashSet<int> Electorate { get; init; }
+        public required Action<int?> OnFinished { get; init; }
+        public Dictionary<int, int> Ballots { get; } = [];
+        public Dictionary<int, IMenu> Menus { get; } = [];
+        public int SecondsLeft { get; set; } = VoteSeconds;
+
+        // A ballot outlives its voter leaving, and still counts when the vote ends.
+        public int Voters => Electorate.Count + Ballots.Keys.Count(slot => !Electorate.Contains(slot));
+
+        public int Voted => Ballots.Count;
+
+        public string Question(IPlayer? viewer) => Title(viewer);
+
+        public IReadOnlyList<string> Options(IPlayer? viewer) => [.. Enumerable.Range(0, OptionCount).Select(i => OptionText(viewer, i))];
+
+        public int Votes(int option) => Ballots.Values.Count(v => v == option);
+    }
+
+    // Anyone may reopen their ballot; starting a vote needs the permission.
+    [Command("vote")]
+    public void VoteCommand(ICommandContext context)
+    {
+        var issuer = Issuer.From(context);
+        var args = context.Args;
+
+        if (args.Length == 0 && issuer.Player is { } voter && _vote is { } running)
+        {
+            Reopen(running, voter);
+            return;
+        }
+
+        if (issuer.Player is { } player && !_core.Permission.PlayerHasPermission(player.SteamID, Permission))
+        {
+            _messenger.Reply(issuer, args.Length == 0 ? "vote.none" : "command.no_permission");
+            return;
+        }
+
+        if (args.Length < 3)
+        {
+            _messenger.Syntax(issuer, "vote", "<question> <option1> <option2> [option3...]");
+            return;
+        }
+
+        var question = args[0];
+        var options = args.Skip(1).ToArray();
+
+        Start(issuer, AdminVoteKind.Poll, null, _ => question, options.Length, (_, index) => options[index], _ => { });
+    }
+
+    [Command("votekick", permission: "admins.commands.votekick")]
+    public void VoteKickCommand(ICommandContext context)
+    {
+        var issuer = Issuer.From(context);
+        var args = context.Args;
+
+        if (args.Length < 1)
+        {
+            _messenger.Syntax(issuer, "votekick", "<player>");
+            return;
+        }
+
+        var players = _targets.Find(issuer.Player, args[0], out var error, excludeCaller: true);
+        if (_messenger.ReportTargetError(issuer, error, args[0])) return;
+
+        if (players.Count > 1)
+        {
+            _messenger.Reply(issuer, "command.multiple_targets", args[0]);
+            return;
+        }
+
+        var target = players[0];
+        if (!_access.CanTarget(issuer.Player, target.SteamID))
+        {
+            _messenger.Reply(issuer, "command.target_has_immunity", Names.Of(target), _access.GetImmunity(target.SteamID));
+            return;
+        }
+
+        var reference = PlayerRef.Of(target);
+        Start(
+            issuer,
+            AdminVoteKind.Kick,
+            new AdminPlayerRow(reference.Slot, reference.SessionId, reference.SteamId, reference.Name),
+            viewer => _messenger.Text(viewer, "vote.kick_title", reference.Name),
+            2,
+            (viewer, index) => _messenger.Text(viewer, index == 0 ? "yes" : "no"),
+            winner =>
+            {
+                // Yes has to beat No outright; a tie keeps the player.
+                if (winner != 0 || reference.Resolve(_core) is not { } player) return;
+
+                player.Kick(_messenger.Text(player, "vote.kicked"), ENetworkDisconnectionReason.NETWORK_DISCONNECT_KICKED);
+                _messenger.Broadcast("vote.kick_passed", reference.Name);
+            });
+    }
+
+    [Command("votemap", permission: "admins.commands.votemap")]
+    public void VoteMapCommand(ICommandContext context)
+    {
+        var issuer = Issuer.From(context);
+        var maps = context.Args;
+
+        if (maps.Length < 2)
+        {
+            _messenger.Syntax(issuer, "votemap", "<map1> <map2> [map3...]");
+            return;
+        }
+
+        if (maps.FirstOrDefault(m => !_server.IsKnownMap(m)) is { } invalid)
+        {
+            _messenger.Reply(issuer, "command.map_not_found", invalid);
+            return;
+        }
+
+        Start(
+            issuer,
+            AdminVoteKind.Map,
+            null,
+            viewer => _messenger.Text(viewer, "vote.map_title"),
+            maps.Length,
+            (_, index) => maps[index],
+            winner =>
+            {
+                if (winner is { } index) _server.ChangeMap(issuer, maps[index]);
+            });
+    }
+
+    /// <param name="onFinished">Receives the winning option, or null when nobody voted or the top options tie.</param>
+    private void Start(
+        Issuer issuer, AdminVoteKind kind, AdminPlayerRow? target, Func<IPlayer?, string> title, int optionCount,
+        Func<IPlayer?, int, string> optionText, Action<int?> onFinished)
+    {
+        if (_vote is not null)
+        {
+            _messenger.Reply(issuer, "vote.active");
+            return;
+        }
+
+        var voters = _messenger.Humans().ToList();
+        if (voters.Count == 0)
+        {
+            _messenger.Reply(issuer, "command.no_valid_targets");
+            return;
+        }
+
+        var vote = new Vote
+        {
+            Timer = _core.Scheduler.DelayAndRepeatGuarded(1f, 1f, _logger, Tick),
+            Kind = kind,
+            StartedBy = issuer.Name,
+            Target = target,
+            Title = title,
+            OptionCount = optionCount,
+            OptionText = optionText,
+            Electorate = [.. voters.Select(p => p.Slot)],
+            OnFinished = onFinished,
+        };
+
+        _vote = vote;
+
+        foreach (var voter in voters)
+        {
+            var options = string.Join(", ", Enumerable.Range(0, optionCount).Select(i => $"{i + 1}. {optionText(voter, i)}"));
+            _messenger.Chat(voter, "vote.started", issuer.Name, title(voter), options);
+            OpenBallot(vote, voter);
+        }
+    }
+
+    private void Reopen(Vote vote, IPlayer voter)
+    {
+        if (!vote.Electorate.Contains(voter.Slot))
+        {
+            _messenger.Chat(voter, "vote.not_eligible");
+            return;
+        }
+
+        if (vote.Ballots.ContainsKey(voter.Slot))
+        {
+            _messenger.Chat(voter, "vote.already_voted");
+            return;
+        }
+
+        OpenBallot(vote, voter);
+    }
+
+    // An admin interrupted mid-menu goes back to the same page after voting.
+    private void OpenBallot(Vote vote, IPlayer voter)
+    {
+        var current = _core.Menu.GetSession(voter)?.Menu;
+        if (current?.Id == BallotMenuId) current = current.Parent;
+
+        var parent = current is not null && current.Id.StartsWith("admins.", StringComparison.Ordinal) ? current : null;
+        var openedAt = 0L;
+
+        var builder = _core.Menu.CreateMenu(BallotMenuId)
+            .WithTitle(vote.Title(voter))
+            .AddHeader(new TextComponent { TextProvider = s => _messenger.Text(s.Player, "vote.time_left", vote.SecondsLeft) });
+
+        if (parent is not null) builder.WithParent(parent);
+
+        for (var i = 0; i < vote.OptionCount; i++)
+        {
+            var index = i;
+            builder.Add(new ButtonComponent(string.Empty, ctx =>
+            {
+                Cast(ctx.Session, index);
+                return ValueTask.CompletedTask;
+            })
+            {
+                TextProvider = s => vote.OptionText(s.Player, index),
+                Validating = _ => ValueTask.FromResult(Environment.TickCount64 - openedAt >= BallotGuardMs),
+                Tag = new AdminVoteOptionRow(index),
+            });
+        }
+
+        var menu = builder.Build();
+        menu.Tag = vote;
+        menu.Opened += _ => openedAt = Environment.TickCount64;
+
+        vote.Menus[voter.Slot] = menu;
+        menu.Open(voter);
+    }
+
+    private void Cast(IMenuSession session, int option)
+    {
+        var slot = session.Player.Slot;
+        if (_vote is not { } vote || !vote.Electorate.Contains(slot) || vote.Ballots.ContainsKey(slot)) return;
+
+        vote.Ballots[slot] = option;
+        vote.Menus.Remove(slot);
+        session.Close();
+
+        // Deferred: closing every session from inside this menu's own action handler is not safe.
+        if (vote.Electorate.All(vote.Ballots.ContainsKey)) _core.Scheduler.NextTick(() => Finish(vote));
+    }
+
+    private void Tick()
+    {
+        if (_vote is not { } vote) return;
+
+        vote.SecondsLeft--;
+        if (vote.SecondsLeft <= 0)
+        {
+            Finish(vote);
+            return;
+        }
+
+        foreach (var menu in vote.Menus.Values)
+        {
+            foreach (var session in menu.Sessions) session.Invalidate();
+        }
+    }
+
+    private void Finish(Vote vote)
+    {
+        if (!ReferenceEquals(_vote, vote)) return;
+
+        _vote = null;
+        vote.Timer.Cancel();
+        foreach (var menu in vote.Menus.Values) menu.CloseAll();
+        vote.Menus.Clear();
+
+        var tally = vote.Ballots.Values.GroupBy(v => v).ToDictionary(g => g.Key, g => g.Count());
+        var total = vote.Ballots.Count;
+
+        foreach (var player in _messenger.Humans())
+        {
+            _messenger.Chat(player, "vote.ended", total);
+            if (total > 0)
+            {
+                var results = string.Join(", ", Enumerable.Range(0, vote.OptionCount).Select(i => $"{vote.OptionText(player, i)}: {tally.GetValueOrDefault(i)}"));
+                _messenger.Chat(player, "vote.results", results);
+            }
+        }
+
+        int? winner = null;
+        if (total > 0)
+        {
+            var best = tally.Values.Max();
+            var leaders = tally.Where(t => t.Value == best).Select(t => t.Key).ToList();
+            if (leaders.Count == 1) winner = leaders[0];
+        }
+
+        try
+        {
+            vote.OnFinished(winner);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Applying a vote result failed.");
+        }
+    }
+
+    [EventListener<EventDelegates.OnClientDisconnected>]
+    public void OnClientDisconnected(IOnClientDisconnectedEvent e)
+    {
+        if (_vote is not { } vote || !vote.Electorate.Remove(e.PlayerId)) return;
+
+        vote.Menus.Remove(e.PlayerId);
+        if (vote.Electorate.All(vote.Ballots.ContainsKey)) Finish(vote);
+    }
+
+    // A vote cannot carry over to the next map: its result would apply there (votemap, votekick) with a new electorate.
+    [EventListener<EventDelegates.OnMapUnload>]
+    public void OnMapUnload(IOnMapUnloadEvent e) => Cancel();
+
+    public void Dispose() => Cancel();
+
+    private void Cancel()
+    {
+        if (_vote is not { } vote) return;
+
+        _vote = null;
+        vote.Timer.Cancel();
+
+        foreach (var menu in vote.Menus.Values)
+        {
+            menu.Parent = null;
+            menu.CloseAll();
+        }
+
+        vote.Menus.Clear();
+    }
+}
