@@ -129,24 +129,12 @@ jobs:
 
       - name: Determine release tag
         id: tag
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
           VERSION="${{ steps.version.outputs.version }}"
           REPO_NAME="${{ github.event.repository.name }}"
 
-          # Find next available tag/build number
-          BASE_TAG="v${VERSION}"
-          TAG="$BASE_TAG"
-          TITLE="${REPO_NAME} | ${BASE_TAG}"
-          BUILD_NUM=1
-
-          while gh release view "$TAG" &>/dev/null; do
-            BUILD_NUM=$((BUILD_NUM + 1))
-            TAG="${BASE_TAG}-${BUILD_NUM}"
-            TITLE="${REPO_NAME} | ${BASE_TAG}#${BUILD_NUM}"
-            echo "Tag $BASE_TAG exists, trying: $TAG"
-          done
+          TAG="v${VERSION}"
+          TITLE="${REPO_NAME} | ${TAG}"
 
           echo "tag=$TAG" >> $GITHUB_OUTPUT
           echo "title=$TITLE" >> $GITHUB_OUTPUT
