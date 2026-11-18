@@ -78,25 +78,16 @@ docs/                          API docs
   (a `[ThreadStatic]` set around the call); those selectors read teams from the controller, not the
   pawn. Other tags, such as `@me`, `@aim`, `@human` and `@bots`, are SwiftlyS2's own. With no
   caller, `@me` and `@aim` find nobody, as does a name typed as exactly `@me` or `@aim` (SwiftlyS2
-  answers those from the searcher alone). Admins' handler records the candidates its rule accepted,
-  and a lookup picks among those, so on those lookups another plugin's handler can never add a
-  player and can make Admins find nobody: a pick it turns down is not replaced, and a player it
-  turns down leaves the group (a lookup is redirected only in the stopped-chain case below).
-  Admins' handler overwrites the verdict of handlers that ran before it, so another plugin's block
-  on Admins' searches holds only when its handler runs after Admins' or sets `Result` to
-  `Handled`/`Stop`. A chain stopped before Admins' handler hides that candidate from Admins'
-  lookup, so only there can a name or a `#` number settle on the next match; the player behind a
-  SteamID still counts as online through `GetPlayerFromSteamId`, so `FindOne` finds nobody rather
-  than punishing offline.
+  answers those from the searcher alone).
   Punishments and their removals check for an IP address first, so a name and an address are never
   mistaken for each other, then take one player through `FindOne`, never a group.
   Anything by IP, those commands and the menu alike, is refused while anyone connected from the
   address is immune. `TargetResolver.OnIp` lists those connections itself: SwiftlyS2's search
   matches no address and leaves out players with no pawn, whom the punishment would reach without
-  an immunity check. A SteamID with nobody online behind it (`GetPlayerFromSteamId`, unauthorized
-  players included) is punished offline, under the name of its latest session; one whose player is
-  online but not found targets nobody. A removal that finds nobody lifts by a SteamID, even one
-  whose player is online but not found, and looks anything else up by the name on the punishments.
+  an immunity check. A SteamID the search does not return is punished by SteamID, under the name of
+  its latest session; a ban still kicks, and a gag or mute still applies to, anyone connected with
+  it. A removal that finds nobody lifts by a SteamID, and looks anything else up by the name on the
+  punishments.
 - With `Bans.GlobalBansMatchIp`, a global SteamID ban also matches the IP recorded on it.
   `BansService.Matches` and the two queries that pre-filter for it (`FindActiveBanAsync`,
   `CheckOnlinePlayers`) must agree. The queries spell out one predicate per setting, the way

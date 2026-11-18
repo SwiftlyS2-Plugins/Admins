@@ -20,7 +20,6 @@ public sealed class TargetResolver
 {
     // Set only around Admins' own search: the handler runs for every plugin's searches.
     [ThreadStatic] private static Func<IPlayer, bool>? _rule;
-    [ThreadStatic] private static List<IPlayer>? _accepted;
 
     private readonly ISwiftlyCore _core;
 
@@ -39,7 +38,6 @@ public sealed class TargetResolver
         if (string.IsNullOrWhiteSpace(query)) return [];
 
         var text = query.Trim();
-        HashSet<IPlayer> turnedDown;
 
         if (groups && text.StartsWith('@'))
         {
@@ -51,8 +49,7 @@ public sealed class TargetResolver
 
             if (Selector(tag) is { } member)
             {
-                group = Candidates(caller, tag, member, out turnedDown);
-                group.RemoveAll(turnedDown.Contains);
+                group = Candidates(caller, tag, member);
             }
             else
             {
@@ -80,19 +77,19 @@ public sealed class TargetResolver
 
         if (text.StartsWith('#') && int.TryParse(text[1..], out var id))
         {
-            var players = Candidates(caller, text, p => p.UserID == id || p.Slot == id, out turnedDown);
-            return Single(players.FirstOrDefault(p => p.UserID == id) ?? players.FirstOrDefault(p => p.Slot == id), turnedDown, out error);
+            var players = Candidates(caller, text, p => p.UserID == id || p.Slot == id);
+            return Single(players.FirstOrDefault(p => p.UserID == id) ?? players.FirstOrDefault(p => p.Slot == id), out error);
         }
 
         if (SteamIds.TryParse(text, out var steamId))
         {
-            var players = Candidates(caller, text, p => p.SteamID == steamId, out turnedDown);
-            return Single(players.FirstOrDefault(p => p.SteamID == steamId), turnedDown, out error);
+            var players = Candidates(caller, text, p => p.SteamID == steamId);
+            return Single(players.FirstOrDefault(p => p.SteamID == steamId), out error);
         }
 
         var lowered = text.ToLowerInvariant();
         int? statusId = text.All(char.IsAsciiDigit) && int.TryParse(text, out var number) ? number : null;
-        var named = Candidates(caller, text, p => p.UserID == statusId || Names.Of(p).ToLowerInvariant().Contains(lowered, StringComparison.Ordinal), out turnedDown)
+        var named = Candidates(caller, text, p => p.UserID == statusId || Names.Of(p).ToLowerInvariant().Contains(lowered, StringComparison.Ordinal))
             .Select(p => (Player: p, Name: Names.Of(p).ToLowerInvariant())).ToList();
 
         // A name typed in full, or the user id from status without its '#', beats a name that only contains the text.
@@ -105,13 +102,12 @@ public sealed class TargetResolver
             return [];
         }
 
-        return Single(matches.Count == 1 ? matches[0].Player : null, turnedDown, out error);
+        return Single(matches.Count == 1 ? matches[0].Player : null, out error);
     }
 
     /// <summary>
-    /// A punishment's target: one player found by name, SteamID or user id, never a group. With nobody on the server
-    /// behind a SteamID, returns null with <paramref name="steamId"/> set and no error, for an offline punishment;
-    /// with a player there whom the search does not return, it finds nobody.
+    /// A punishment's target: one player found by name, SteamID or user id, never a group. With nobody found behind a
+    /// SteamID, returns null with <paramref name="steamId"/> set and no error: the punishment then goes by SteamID.
     /// </summary>
     public IPlayer? FindOne(IPlayer? caller, string query, out ulong steamId, out TargetError error)
     {
@@ -119,14 +115,7 @@ public sealed class TargetResolver
         var players = Find(caller, query, out error, groups: false);
         if (players.Count > 0) return players[0];
 
-        // Unauthorized players too: under SwiftlyS2's default flexible auth the search matches them by SteamID.
-        if (error == TargetError.NotFound && SteamIds.TryParse(query.Trim(), out var id)
-            && _core.PlayerManager.GetPlayerFromSteamId(id, allowUnauthorized: true) is null)
-        {
-            steamId = id;
-            error = TargetError.None;
-        }
-
+        if (error == TargetError.NotFound && SteamIds.TryParse(query.Trim(), out steamId)) error = TargetError.None;
         return null;
     }
 
@@ -149,36 +138,24 @@ public sealed class TargetResolver
     [EventListener<EventDelegates.OnFindTargettedPlayers>]
     public void OnFindTargettedPlayers(IOnFindTargettedPlayersEvent e)
     {
-        if (_rule is not { } rule) return;
-
-        e.IsMatch = rule(e.Candidate);
-        if (e.IsMatch) _accepted!.Add(e.Candidate);
+        if (_rule is { } rule) e.IsMatch = rule(e.Candidate);
     }
 
-    // Returns the candidates the rule accepted, which OnFindTargettedPlayers collects while SwiftlyS2 searches.
-    private List<IPlayer> Candidates(IPlayer? caller, string target, Func<IPlayer, bool> rule, out HashSet<IPlayer> turnedDown)
+    private List<IPlayer> Candidates(IPlayer? caller, string target, Func<IPlayer, bool> rule)
     {
-        turnedDown = [];
-
         // SwiftlyS2 answers "@me" and "@aim" from the searcher alone, never as names.
         if (target is "@me" or "@aim") return [];
 
-        List<IPlayer> accepted = [];
         _rule = rule;
-        _accepted = accepted;
         try
         {
             // Without IncludeSelf, SwiftlyS2 reads the caller's slot, which the console (a null caller) does not have.
-            var found = _core.PlayerManager.FindTargettedPlayers(caller!, target, TargetSearchMode.IncludeSelf).ToHashSet();
-            turnedDown = [.. accepted.Where(p => !found.Contains(p))];
+            return [.. _core.PlayerManager.FindTargettedPlayers(caller!, target, TargetSearchMode.IncludeSelf)];
         }
         finally
         {
             _rule = null;
-            _accepted = null;
         }
-
-        return accepted;
     }
 
     private static Func<IPlayer, bool>? Selector(string tag) => tag switch
@@ -197,11 +174,8 @@ public sealed class TargetResolver
     private static bool IsAlive(IPlayer player) =>
         player.PlayerPawn is { IsValid: true } pawn && pawn.LifeState == (byte)LifeState_t.LIFE_ALIVE;
 
-    private static IReadOnlyList<IPlayer> Single(IPlayer? player, HashSet<IPlayer> turnedDown, out TargetError error)
+    private static IReadOnlyList<IPlayer> Single(IPlayer? player, out TargetError error)
     {
-        // A pick another plugin's handler turned down finds nobody, never the next match.
-        if (player is not null && turnedDown.Contains(player)) player = null;
-
         error = player is null ? TargetError.NotFound : TargetError.None;
         return player is null ? [] : [player];
     }

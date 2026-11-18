@@ -178,7 +178,7 @@ public sealed partial class CommsService
         {
             Lift(issuer, [(player.SteamID, Net.NormalizeIp(player.IPAddress))], action, Names.Of(player), scope);
         }
-        else if (error == TargetError.None || SteamIds.TryParse(query, out steamId))
+        else if (error == TargetError.None)
         {
             Lift(issuer, [(steamId, string.Empty)], action, steamId.ToString(), scope);
         }
