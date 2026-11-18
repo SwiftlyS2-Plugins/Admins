@@ -28,10 +28,11 @@ dotnet publish Admins.csproj -c Release
 The tree builds with zero warnings; a new one is a regression. There are no tests: verify by
 building, then on a server. `SwiftlyS2.CS2` floats (`*-*`), so a restore can pick up a newer beta.
 
-`.github/workflows/release.yml` publishes the zip as release `v<Version>` (`v<Version>-N` once that
-exists) on a manual run, or on a push to any branch or tag whose head commit message contains
-`[build]`; a missing tag is created on the default branch's head, not the pushed commit. It reads
-the first `Version = "…"` in any `.cs` file, so keep `PluginMetadata`'s the only one.
+`.github/workflows/release.yml` publishes the zip as release `v<Version>` (the run fails if that
+release already exists, so bump `Version` first) on a manual run, or on a push to any branch or tag
+whose head commit message contains `[build]`; a missing tag is created on the default branch's
+head, not the pushed commit. It reads the first `Version = "…"` in any `.cs` file, so keep
+`PluginMetadata`'s the only one.
 
 ## Layout
 
