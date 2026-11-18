@@ -156,7 +156,8 @@ public sealed partial class BansService
             return;
         }
 
-        if (player is not null || error == TargetError.None)
+        // Also a SteamID whose player is on the server but not found: FindOne finds no one for it.
+        if (player is not null || error == TargetError.None || SteamIds.TryParse(query, out steamId))
         {
             var id = player?.SteamID ?? steamId;
             UnbanFound(issuer, player is null ? id.ToString() : Names.Of(player), global, () => FindApplicableActiveAsync(id, null));

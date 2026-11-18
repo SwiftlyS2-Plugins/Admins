@@ -1,4 +1,5 @@
 using SwiftlyS2.Shared;
+using SwiftlyS2.Shared.Events;
 using SwiftlyS2.Shared.Players;
 using SwiftlyS2.Shared.SchemaDefinitions;
 
@@ -12,11 +13,24 @@ public enum TargetError
 }
 
 /// <summary>
-/// Resolves command targets. Unlike <c>FindTargettedPlayers</c> alone, it reaches players who have no pawn yet
-/// (connecting, team select) and refuses a partial name that matches several players.
+/// Resolves command targets through SwiftlyS2's <c>FindTargettedPlayers</c>, so only players it offers are found, with
+/// Admins' rule for each lookup applied in its handler. Refuses a partial name that matches several players.
 /// </summary>
-public sealed class TargetResolver(ISwiftlyCore core)
+public sealed class TargetResolver
 {
+    // Set only around Admins' own search: the handler runs for every plugin's searches.
+    [ThreadStatic] private static Func<IPlayer, bool>? _rule;
+    [ThreadStatic] private static List<IPlayer>? _accepted;
+
+    private readonly ISwiftlyCore _core;
+
+    public TargetResolver(ISwiftlyCore core)
+    {
+        _core = core;
+
+        core.Registrator.Register(this);
+    }
+
     /// <param name="excludeCaller">Drops the caller from group selectors such as <c>@all</c> or <c>@t</c>; <c>@me</c> still works.</param>
     /// <param name="groups">Off, a query starting with <c>@</c> is read as a name, so it finds one player at most.</param>
     public IReadOnlyList<IPlayer> Find(IPlayer? caller, string? query, out TargetError error, bool excludeCaller = false, bool groups = true)
@@ -25,19 +39,20 @@ public sealed class TargetResolver(ISwiftlyCore core)
         if (string.IsNullOrWhiteSpace(query)) return [];
 
         var text = query.Trim();
-        var players = core.PlayerManager.GetAllPlayers().Where(p => p.Controller is not { IsValid: true, IsHLTV: true }).ToList();
+        HashSet<IPlayer> turnedDown;
 
         if (groups && text.StartsWith('@'))
         {
-            // SwiftlyS2's selectors match tags case-sensitively, skip players with no pawn, and find no team at all
-            // for a caller without one, so these are read from the controller here.
+            // Lowercased, as SwiftlyS2 compares tags case-sensitively. Admins' selectors read teams from the controller,
+            // where SwiftlyS2's read the pawn.
             var tag = text.ToLowerInvariant();
             var isMe = tag == "@me";
             List<IPlayer> group;
 
             if (Selector(tag) is { } member)
             {
-                group = [.. players.Where(member)];
+                group = Candidates(caller, tag, member, out turnedDown);
+                group.RemoveAll(turnedDown.Contains);
             }
             else
             {
@@ -49,7 +64,7 @@ public sealed class TargetResolver(ISwiftlyCore core)
 
                 try
                 {
-                    group = [.. core.PlayerManager.FindTargettedPlayers(caller!, tag, TargetSearchMode.IncludeSelf)];
+                    group = [.. _core.PlayerManager.FindTargettedPlayers(caller!, tag, TargetSearchMode.IncludeSelf)];
                 }
                 catch (Exception)
                 {
@@ -65,17 +80,20 @@ public sealed class TargetResolver(ISwiftlyCore core)
 
         if (text.StartsWith('#') && int.TryParse(text[1..], out var id))
         {
-            return Single(players.FirstOrDefault(p => p.UserID == id) ?? players.FirstOrDefault(p => p.Slot == id), out error);
+            var players = Candidates(caller, text, p => p.UserID == id || p.Slot == id, out turnedDown);
+            return Single(players.FirstOrDefault(p => p.UserID == id) ?? players.FirstOrDefault(p => p.Slot == id), turnedDown, out error);
         }
 
         if (SteamIds.TryParse(text, out var steamId))
         {
-            return Single(players.FirstOrDefault(p => p.SteamID == steamId), out error);
+            var players = Candidates(caller, text, p => p.SteamID == steamId, out turnedDown);
+            return Single(players.FirstOrDefault(p => p.SteamID == steamId), turnedDown, out error);
         }
 
         var lowered = text.ToLowerInvariant();
         int? statusId = text.All(char.IsAsciiDigit) && int.TryParse(text, out var number) ? number : null;
-        var named = players.Select(p => (Player: p, Name: Names.Of(p).ToLowerInvariant())).ToList();
+        var named = Candidates(caller, text, p => p.UserID == statusId || Names.Of(p).ToLowerInvariant().Contains(lowered, StringComparison.Ordinal), out turnedDown)
+            .Select(p => (Player: p, Name: Names.Of(p).ToLowerInvariant())).ToList();
 
         // A name typed in full, or the user id from status without its '#', beats a name that only contains the text.
         var exact = named.Where(n => n.Name == lowered || n.Player.UserID == statusId).ToList();
@@ -87,12 +105,13 @@ public sealed class TargetResolver(ISwiftlyCore core)
             return [];
         }
 
-        return Single(matches.Count == 1 ? matches[0].Player : null, out error);
+        return Single(matches.Count == 1 ? matches[0].Player : null, turnedDown, out error);
     }
 
     /// <summary>
     /// A punishment's target: one player found by name, SteamID or user id, never a group. With nobody on the server
-    /// behind a SteamID, returns null with <paramref name="steamId"/> set and no error, for an offline punishment.
+    /// behind a SteamID, returns null with <paramref name="steamId"/> set and no error, for an offline punishment;
+    /// with a player there whom the search does not return, it finds nobody.
     /// </summary>
     public IPlayer? FindOne(IPlayer? caller, string query, out ulong steamId, out TargetError error)
     {
@@ -100,13 +119,20 @@ public sealed class TargetResolver(ISwiftlyCore core)
         var players = Find(caller, query, out error, groups: false);
         if (players.Count > 0) return players[0];
 
-        if (error == TargetError.NotFound && SteamIds.TryParse(query.Trim(), out steamId)) error = TargetError.None;
+        // Unauthorized players too: under SwiftlyS2's default flexible auth the search matches them by SteamID.
+        if (error == TargetError.NotFound && SteamIds.TryParse(query.Trim(), out var id)
+            && _core.PlayerManager.GetPlayerFromSteamId(id, allowUnauthorized: true) is null)
+        {
+            steamId = id;
+            error = TargetError.None;
+        }
+
         return null;
     }
 
     /// <summary>The humans connected from <paramref name="ip"/>, a normalized address.</summary>
     public IReadOnlyList<IPlayer> OnIp(string ip) =>
-        [.. core.PlayerManager.GetAllPlayers().Where(p => !p.IsFakeClient && Net.NormalizeIp(p.IPAddress) == ip)];
+        [.. _core.PlayerManager.GetAllPlayers().Where(p => !p.IsFakeClient && Net.NormalizeIp(p.IPAddress) == ip)];
 
     /// <summary>
     /// The records named <paramref name="query"/>, ignoring case, or else those whose name contains it, as players on
@@ -118,6 +144,41 @@ public sealed class TargetResolver(ISwiftlyCore core)
         var named = records.Where(r => name(r).ToLowerInvariant().Contains(lowered, StringComparison.Ordinal)).ToList();
         var exact = named.Where(r => name(r).ToLowerInvariant() == lowered).ToList();
         return exact.Count > 0 ? exact : named;
+    }
+
+    [EventListener<EventDelegates.OnFindTargettedPlayers>]
+    public void OnFindTargettedPlayers(IOnFindTargettedPlayersEvent e)
+    {
+        if (_rule is not { } rule) return;
+
+        e.IsMatch = rule(e.Candidate);
+        if (e.IsMatch) _accepted!.Add(e.Candidate);
+    }
+
+    // Returns the candidates the rule accepted, which OnFindTargettedPlayers collects while SwiftlyS2 searches.
+    private List<IPlayer> Candidates(IPlayer? caller, string target, Func<IPlayer, bool> rule, out HashSet<IPlayer> turnedDown)
+    {
+        turnedDown = [];
+
+        // SwiftlyS2 answers "@me" and "@aim" from the searcher alone, never as names.
+        if (target is "@me" or "@aim") return [];
+
+        List<IPlayer> accepted = [];
+        _rule = rule;
+        _accepted = accepted;
+        try
+        {
+            // Without IncludeSelf, SwiftlyS2 reads the caller's slot, which the console (a null caller) does not have.
+            var found = _core.PlayerManager.FindTargettedPlayers(caller!, target, TargetSearchMode.IncludeSelf).ToHashSet();
+            turnedDown = [.. accepted.Where(p => !found.Contains(p))];
+        }
+        finally
+        {
+            _rule = null;
+            _accepted = null;
+        }
+
+        return accepted;
     }
 
     private static Func<IPlayer, bool>? Selector(string tag) => tag switch
@@ -136,8 +197,11 @@ public sealed class TargetResolver(ISwiftlyCore core)
     private static bool IsAlive(IPlayer player) =>
         player.PlayerPawn is { IsValid: true } pawn && pawn.LifeState == (byte)LifeState_t.LIFE_ALIVE;
 
-    private static IReadOnlyList<IPlayer> Single(IPlayer? player, out TargetError error)
+    private static IReadOnlyList<IPlayer> Single(IPlayer? player, HashSet<IPlayer> turnedDown, out TargetError error)
     {
+        // A pick another plugin's handler turned down finds nobody, never the next match.
+        if (player is not null && turnedDown.Contains(player)) player = null;
+
         error = player is null ? TargetError.NotFound : TargetError.None;
         return player is null ? [] : [player];
     }
