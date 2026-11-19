@@ -403,3 +403,54 @@ public class Admins_AddLastSeenAtToServers : Migration
         }
     }
 }
+
+// AsString is NVARCHAR, which MySQL and MariaDB always create as utf8mb3, so emoji and other 4-byte characters failed
+// to insert. The collation is named because the server default varies by engine and version.
+[Migration(20270219000000)]
+public class Admins_TextColumnsUtf8mb4 : Migration
+{
+    private static readonly (string Table, int Length, string[] Columns)[] Tables =
+    [
+        ("player_sessions", 128, ["PlayerName"]),
+        ("ip_ban_exclusions", 128, ["PlayerName", "AdminName"]),
+        ("bans", 255, ["PlayerName", "AdminName", "Reason"]),
+        ("sanctions", 255, ["PlayerName", "AdminName", "Reason"]),
+        ("servers", 255, ["Hostname"]),
+    ];
+
+    public override void Up()
+    {
+        IfDatabase("MySql5", "MariaDB", "MySql").Execute.WithConnection((connection, transaction) =>
+        {
+            foreach (var (table, length, columns) in Tables)
+            {
+                using var command = connection.CreateCommand();
+                command.Transaction = transaction;
+
+                // Skips a column already utf8mb4 (one converted by hand then needs no ALTER right) or no longer varchar(length).
+                command.CommandText = "SELECT COLUMN_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE()"
+                    + $" AND TABLE_NAME = '{table}' AND COLUMN_NAME IN ('{string.Join("', '", columns)}')"
+                    + $" AND COLUMN_TYPE = 'varchar({length})' AND CHARACTER_SET_NAME <> 'utf8mb4'";
+
+                var modify = new List<string>();
+                using (var reader = command.ExecuteReader())
+                {
+                    while (reader.Read())
+                    {
+                        modify.Add($"MODIFY COLUMN `{reader.GetString(0)}` VARCHAR({length}) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL");
+                    }
+                }
+
+                if (modify.Count == 0) continue;
+
+                command.CommandText = $"ALTER TABLE `{table}` {string.Join(", ", modify)}";
+                command.ExecuteNonQuery();
+            }
+        });
+    }
+
+    // Empty: narrowing back to utf8mb3 would fail on, or corrupt, the text this exists to store.
+    public override void Down()
+    {
+    }
+}

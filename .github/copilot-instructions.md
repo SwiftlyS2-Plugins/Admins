@@ -132,6 +132,12 @@ docs/                          API docs
   the `Status` column added to `bans` and `sanctions` (`20270216000000`), and their `SteamId64` and
   `PlayerIp` indexes (`20270217000000`): every enforcement query finds rows through them, and without
   them each sync tick scans both tables whole. `servers.LastSeenAt` (`20270218000000`) too.
+  `20270219000000` makes the names, reasons and `servers.Hostname` utf8mb4 on MySQL/MariaDB: there
+  `AsString` is `NVARCHAR`, which is utf8mb3 and rejects 4-byte characters (emoji), so a new column
+  for typed text needs `AsCustom("VARCHAR(n) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci")`
+  behind `IfDatabase("MySql5", "MariaDB", "MySql")`. `admins.Username` and `groups.Name` stay
+  utf8mb3: operators type them, not players, and `admins.Username` is a unique key that would be
+  1020 bytes in utf8mb4, over the 767 older row formats allow.
 - Migrations `20270214103911`–`…918` reuse the split plugins' ids in the default `VersionInfo`
   ledger, which is what makes existing databases skip them. Never renumber or edit one. A new
   migration takes a new id, guards its create with `Schema.Table(...).Exists()`, and must run on
